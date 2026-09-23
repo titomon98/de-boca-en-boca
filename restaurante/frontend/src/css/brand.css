@@ -1,0 +1,102 @@
+/*
+ * Identidad de marca "De Boca en Boca".
+ * Se carga DESPUÉS de style.css para sobrescribir la paleta base de FoodDesk.
+ * Ajustar los hex aquí si no calzan bien con algún componente.
+ *
+ *  Amarillo principal  #F5C518  -> --primary (color dominante)
+ *  Negro               #1A1A1A  -> texto/contornos, botón secundario
+ *  Rojo de detalle     #D62828  -> acentos/badges (NO dominante)
+ *  Verde confirmación  #2E7D32  -> success (confirmar/cobrar/guardar)
+ *  Rojo cancelación    #D32F2F  -> danger (cancelar/anular/eliminar)
+ */
+
+:root,
+body[data-primary="color_1"],
+[data-primary="color_1"] {
+  --primary: #F5C518;
+  --primary-hover: #d9ab0a;
+  --primary-dark: #8a6c00;
+  --secondary: #1A1A1A;
+}
+
+/* --- Botón primario: amarillo con texto negro (contraste) --- */
+.btn-primary {
+  color: #1A1A1A;
+  background-color: #F5C518;
+  border-color: #F5C518;
+}
+.btn-primary:hover,
+.btn-primary:focus,
+.btn-primary:active,
+.btn-primary.active {
+  color: #1A1A1A;
+  background-color: #d9ab0a;
+  border-color: #d9ab0a;
+}
+.btn-outline-primary {
+  color: #1A1A1A;
+  border-color: #F5C518;
+}
+.btn-outline-primary:hover {
+  color: #1A1A1A;
+  background-color: #F5C518;
+  border-color: #F5C518;
+}
+
+/* --- Botón secundario: negro de marca --- */
+.btn-secondary {
+  color: #fff;
+  background-color: #1A1A1A;
+  border-color: #1A1A1A;
+}
+.btn-secondary:hover,
+.btn-secondary:focus,
+.btn-secondary:active {
+  color: #fff;
+  background-color: #333;
+  border-color: #333;
+}
+
+/* --- Confirmar / aceptar / guardar / cobrar --- */
+.btn-success {
+  color: #fff;
+  background-color: #2E7D32;
+  border-color: #2E7D32;
+}
+.btn-success:hover,
+.btn-success:focus,
+.btn-success:active {
+  color: #fff;
+  background-color: #256628;
+  border-color: #256628;
+}
+
+/* --- Cancelar / anular / eliminar --- */
+.btn-danger {
+  color: #fff;
+  background-color: #D32F2F;
+  border-color: #D32F2F;
+}
+.btn-danger:hover,
+.btn-danger:focus,
+.btn-danger:active {
+  color: #fff;
+  background-color: #b02525;
+  border-color: #b02525;
+}
+
+/* --- Utilidades de color usadas en tarjetas/badges/texto --- */
+.text-primary { color: #b58f00 !important; } /* amarillo legible sobre fondo claro */
+.bg-primary { background-color: #F5C518 !important; color: #1A1A1A !important; }
+.text-success { color: #2E7D32 !important; }
+.bg-success { background-color: #2E7D32 !important; }
+.text-danger { color: #D32F2F !important; }
+.bg-danger { background-color: #D32F2F !important; }
+
+/* Rojo de detalle (acento/borde) — clase propia para no chocar con el rojo de cancelación */
+.text-detail { color: #D62828 !important; }
+.border-detail { border-color: #D62828 !important; }
+.badge-detail { background-color: #D62828; color: #fff; }
+
+/* Marca en el header del sidebar */
+.nav-header .brand-title { color: #1A1A1A; }
