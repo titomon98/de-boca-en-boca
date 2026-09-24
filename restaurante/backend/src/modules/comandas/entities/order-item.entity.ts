@@ -56,4 +56,12 @@ export class OrderItem {
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   notes: string | null;
+
+  /**
+   * Si el renglón es un combo, sus componentes ya resueltos (ligados a productos
+   * reales) para desglosarlos en reportes. El renglón conserva el precio de
+   * paquete; los componentes valen Q0.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  components: { itemId: number; name: string; quantity: number }[] | null;
 }

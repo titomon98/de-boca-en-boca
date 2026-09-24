@@ -28,6 +28,9 @@ export class MenuService {
       type: dto.type ?? 'food',
       available: dto.available ?? true,
       image: dto.image ?? null,
+      includes: dto.includes ?? null,
+      combo: dto.combo ?? null,
+      choiceGroups: dto.choiceGroups ?? null,
     });
     return this.menuItemsRepository.save(item);
   }
@@ -65,6 +68,9 @@ export class MenuService {
     if (dto.type !== undefined) item.type = dto.type;
     if (dto.available !== undefined) item.available = dto.available;
     if (dto.image !== undefined) item.image = dto.image ?? null;
+    if (dto.includes !== undefined) item.includes = dto.includes ?? null;
+    if (dto.combo !== undefined) item.combo = dto.combo ?? null;
+    if (dto.choiceGroups !== undefined) item.choiceGroups = dto.choiceGroups ?? null;
     return this.menuItemsRepository.save(item);
   }
 

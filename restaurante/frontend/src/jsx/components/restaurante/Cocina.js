@@ -116,7 +116,7 @@ const Cocina = () => {
 													<li key={it.id}>
 														<span className="font-w600">{it.quantity}× </span>
 														{it.menuItem?.name}
-														{it.notes && <span className="text-danger small d-block">↳ {it.notes}</span>}
+														{it.notes && <span className="text-danger small d-block">{it.notes}</span>}
 													</li>
 												))}
 											</ul>

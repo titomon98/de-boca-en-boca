@@ -43,6 +43,30 @@ export class MenuItem {
   available: boolean;
 
   /**
+   * Extras que el platillo YA incluye (no se cobran). Si un incluido trae
+   * `options`, al agregar el platillo se pregunta cuál (ej. sabor del aderezo).
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  includes: { label: string; options?: string[]; choose?: number }[] | null;
+
+  /**
+   * Si no es null, el platillo es un COMBO: sus componentes se ligan a productos
+   * reales del menú y el precio del platillo es el precio de paquete. Los
+   * condimentos a elegir (aderezos) siguen en `includes`.
+   */
+  @Column({ type: 'jsonb', nullable: true })
+  combo: { components: { itemId: number; quantity: number }[] } | null;
+
+  /**
+   * Grupos de elección ligados a productos reales (ej. "elige 2 aderezos").
+   * Los elegidos se agregan como componentes a Q0 y se cuentan en analítica.
+   */
+  @Column({ name: 'choice_groups', type: 'jsonb', nullable: true })
+  choiceGroups:
+    | { label: string; choose: number; optionItemIds: number[] }[]
+    | null;
+
+  /**
    * Foto del platillo en base64 (data URL). `select: false` para no cargarla en
    * consultas pesadas (comandas/cocina); el menú la incluye con addSelect.
    */

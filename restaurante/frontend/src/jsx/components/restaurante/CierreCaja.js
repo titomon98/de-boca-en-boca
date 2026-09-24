@@ -127,7 +127,7 @@ const CierreCaja = () => {
 								{history.map((c) => (
 									<tr key={c.id}>
 										<td>{new Date(c.date).toLocaleString('es-GT')}</td>
-										<td>{c.user?.name || '—'}</td>
+										<td>{c.user?.name || '-'}</td>
 										<td className="text-end">{money(c.totalCash)}</td>
 										<td className="text-end">{money(c.totalCard)}</td>
 										<td className="text-end font-w600">{money(c.totalSales)}</td>

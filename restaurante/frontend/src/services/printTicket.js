@@ -14,7 +14,7 @@ export function printTicket(order, opts = {}) {
       <tr>
         <td class="q">${it.quantity}x</td>
         <td class="n">${escapeHtml(it.menuItem?.name || '')}${
-          it.notes ? `<div class="note">↳ ${escapeHtml(it.notes)}</div>` : ''
+          it.notes ? `<div class="note">${escapeHtml(it.notes)}</div>` : ''
         }</td>
       </tr>`,
     )

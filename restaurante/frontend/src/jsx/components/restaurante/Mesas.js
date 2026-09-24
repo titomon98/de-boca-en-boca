@@ -26,6 +26,9 @@ const Mesas = () => {
 		load();
 	}, [load]);
 
+	// "Para llevar" tiene su propia vista; aquí sólo mesas de salón.
+	const diningTables = tables.filter((t) => !(t.isTakeout || t.number === 0));
+
 	const accountsByTable = (tableId) =>
 		accounts.filter((a) => (a.tables || []).some((t) => t.id === tableId));
 
@@ -87,7 +90,7 @@ const Mesas = () => {
 			</div>
 
 			<Row className="g-3">
-				{tables.map((t) => {
+				{diningTables.map((t) => {
 					const meta = TABLE_STATUS[t.status] || TABLE_STATUS.free;
 					const takeout = t.isTakeout || t.number === 0;
 					const accs = accountsByTable(t.id);
@@ -154,14 +157,14 @@ const Mesas = () => {
 					<Form.Group className="mb-3">
 						<Form.Label>Etiqueta de la cuenta</Form.Label>
 						<Form.Control
-							placeholder="Ej. Familia López, Cliente A…"
+							placeholder="Ingrese dueño de cuenta"
 							value={label}
 							onChange={(e) => setLabel(e.target.value)}
 						/>
 					</Form.Group>
 					<Form.Label>Mesas (seleccione una o varias para unirlas)</Form.Label>
 					<Row className="g-2">
-						{tables.map((t) => {
+						{diningTables.map((t) => {
 							const meta = TABLE_STATUS[t.status] || TABLE_STATUS.free;
 							const takeout = t.isTakeout || t.number === 0;
 							const active = selected.includes(t.id);

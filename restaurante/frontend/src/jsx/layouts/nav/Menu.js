@@ -23,6 +23,12 @@ export const MenuList = [
         roles: [A, W, C],
     },
     {
+        title: 'Para llevar',
+        to: 'para-llevar',
+        iconStyle: 'fa-solid fa-bag-shopping',
+        roles: [A, W, C],
+    },
+    {
         title: 'Cocina',
         to: 'cocina',
         iconStyle: 'bi bi-egg-fried',

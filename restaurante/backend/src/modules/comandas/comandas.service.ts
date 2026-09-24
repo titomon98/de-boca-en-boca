@@ -67,6 +67,21 @@ export class ComandasService {
       });
       const menuById = new Map(menuItems.map((m) => [m.id, m]));
 
+      // Nombres de los productos que aparecen como componentes: los fijos del
+      // combo y los elegidos en grupos de elección (aderezos), para desglosarlos
+      // en analítica.
+      const componentIds = [
+        ...menuItems.flatMap((m) => m.combo?.components ?? []).map((c) => c.itemId),
+        ...dto.items.flatMap((i) => i.chosenItemIds ?? []),
+      ];
+      const componentById = new Map<number, MenuItem>();
+      if (componentIds.length) {
+        const comps = await manager.find(MenuItem, {
+          where: { id: In(componentIds) },
+        });
+        comps.forEach((c) => componentById.set(c.id, c));
+      }
+
       const order = manager.create(Order, {
         accountId: account.id,
         waiterId: user.id,
@@ -94,6 +109,47 @@ export class ComandasService {
         const subtotal = round2(unitPrice * line.quantity);
         orderTotal += subtotal;
 
+        // Componentes del renglón (a Q0, para analítica): los fijos del combo
+        // más los elegidos en grupos de elección (aderezos). Todo x cantidad.
+        const nameOf = (id: number) => componentById.get(id)?.name ?? `#${id}`;
+        const components: { itemId: number; name: string; quantity: number }[] = [];
+
+        for (const c of menuItem.combo?.components ?? []) {
+          components.push({
+            itemId: c.itemId,
+            name: nameOf(c.itemId),
+            quantity: c.quantity * line.quantity,
+          });
+        }
+
+        // Validar los elegidos contra los grupos de elección del platillo.
+        const chosen = line.chosenItemIds ?? [];
+        const groups = menuItem.choiceGroups ?? [];
+        if (groups.length > 0) {
+          const remaining = [...chosen];
+          for (const g of groups) {
+            const picked = remaining.filter((id) => g.optionItemIds.includes(id));
+            if (picked.length !== g.choose) {
+              throw new BadRequestException(
+                `"${menuItem.name}": debe elegir ${g.choose} de "${g.label}"`,
+              );
+            }
+            // quitar los usados por este grupo
+            for (const id of picked) remaining.splice(remaining.indexOf(id), 1);
+          }
+          if (remaining.length > 0) {
+            throw new BadRequestException(
+              `"${menuItem.name}": opción elegida no válida`,
+            );
+          }
+        }
+        // Agregar los elegidos como componentes (agrupando repetidos), x cantidad.
+        const chosenCounts = new Map<number, number>();
+        for (const id of chosen) chosenCounts.set(id, (chosenCounts.get(id) ?? 0) + 1);
+        for (const [id, count] of chosenCounts) {
+          components.push({ itemId: id, name: nameOf(id), quantity: count * line.quantity });
+        }
+
         const item = manager.create(OrderItem, {
           orderId: order.id,
           menuItemId: menuItem.id,
@@ -101,6 +157,7 @@ export class ComandasService {
           unitPrice,
           subtotal,
           notes: line.notes ?? null,
+          components: components.length ? components : null,
         });
         await manager.save(item);
       }

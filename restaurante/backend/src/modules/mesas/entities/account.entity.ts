@@ -63,4 +63,11 @@ export class Account {
 
   @Column({ name: 'closed_at', type: 'timestamp', nullable: true })
   closedAt: Date | null;
+
+  /**
+   * Entrega (para llevar). Independiente del cobro: NULL = pendiente de entrega,
+   * con fecha = entregada. Se combina libremente con el estado de pago.
+   */
+  @Column({ name: 'delivered_at', type: 'timestamp', nullable: true })
+  deliveredAt: Date | null;
 }

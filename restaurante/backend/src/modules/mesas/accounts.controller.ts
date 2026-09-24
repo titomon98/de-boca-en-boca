@@ -38,6 +38,13 @@ export class AccountsController {
     return this.accountsService.findOpen();
   }
 
+  /** Órdenes para llevar activas (hasta que estén cobradas y entregadas). */
+  @Get('takeout')
+  @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
+  findTakeout() {
+    return this.accountsService.findTakeout();
+  }
+
   @Get(':id')
   @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
   findOne(@Param('id', ParseIntPipe) id: number) {
@@ -64,6 +71,17 @@ export class AccountsController {
   @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
   markBilling(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
     return this.accountsService.markBilling(id, user);
+  }
+
+  /** Entrega de orden para llevar (entregada / pendiente). */
+  @Post(':id/delivered')
+  @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
+  setDelivered(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('delivered') delivered: boolean,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.accountsService.setDelivered(id, delivered !== false, user);
   }
 
   @Post(':id/cancel')

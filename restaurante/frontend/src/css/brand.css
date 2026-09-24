@@ -5,7 +5,7 @@
  *
  *  Amarillo principal  #F5C518  -> --primary (color dominante)
  *  Negro               #1A1A1A  -> texto/contornos, botón secundario
- *  Rojo de detalle     #D62828  -> acentos/badges (NO dominante)
+ *  Rojo de detalle     #F5C518  -> acentos/badges (NO dominante)
  *  Verde confirmación  #2E7D32  -> success (confirmar/cobrar/guardar)
  *  Rojo cancelación    #D32F2F  -> danger (cancelar/anular/eliminar)
  */
@@ -93,10 +93,17 @@ body[data-primary="color_1"],
 .text-danger { color: #D32F2F !important; }
 .bg-danger { background-color: #D32F2F !important; }
 
-/* Rojo de detalle (acento/borde) — clase propia para no chocar con el rojo de cancelación */
-.text-detail { color: #D62828 !important; }
-.border-detail { border-color: #D62828 !important; }
-.badge-detail { background-color: #D62828; color: #fff; }
+/* Rojo de detalle (acento/borde) - clase propia para no chocar con el rojo de cancelación */
+.text-detail { color: #F5C518 !important; }
+.border-detail { border-color: #F5C518 !important; }
+.badge-detail { background-color: #F5C518; color: #fff; }
 
 /* Marca en el header del sidebar */
 .nav-header .brand-title { color: #1A1A1A; }
+
+/* Login: quitar las líneas decorativas a los lados del subtítulo,
+   que con el texto corto en español lo cruzan y parecen un tachón. */
+.bg-login .sign-in-your .dlab-sign-up:before,
+.bg-login .sign-in-your .dlab-sign-up:after {
+  display: none;
+}

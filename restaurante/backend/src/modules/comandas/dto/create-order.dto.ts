@@ -23,6 +23,16 @@ export class OrderItemInputDto {
   @IsString()
   @MaxLength(255)
   notes?: string;
+
+  /**
+   * Productos elegidos en los grupos de elección del platillo (ej. los 2
+   * aderezos de un combo). Se agregan como componentes a Q0 y se cuentan en
+   * analítica. Puede repetir ids (ej. 2 veces Ranch).
+   */
+  @IsOptional()
+  @IsArray()
+  @IsInt({ each: true })
+  chosenItemIds?: number[];
 }
 
 /**

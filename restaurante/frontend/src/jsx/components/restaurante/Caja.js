@@ -112,7 +112,7 @@ const Caja = () => {
 			</Card>
 
 			<Modal show={show} onHide={() => setShow(false)} centered>
-				<Modal.Header closeButton><Modal.Title>Cobrar — {target?.label}</Modal.Title></Modal.Header>
+				<Modal.Header closeButton><Modal.Title>Cobrar - {target?.label}</Modal.Title></Modal.Header>
 				<Modal.Body>
 					<div className="d-flex justify-content-between mb-2">
 						<span>Total</span><strong>{money(target?.total)}</strong>

@@ -14,6 +14,7 @@ import ScrollToTop from "./layouts/ScrollToTop";
 /// Páginas del restaurante
 import Dashboard from "./components/restaurante/Dashboard";
 import Mesas from "./components/restaurante/Mesas";
+import ParaLlevar from "./components/restaurante/ParaLlevar";
 import CuentaDetail from "./components/restaurante/CuentaDetail";
 import Cocina from "./components/restaurante/Cocina";
 import MenuAdmin from "./components/restaurante/MenuAdmin";
@@ -36,6 +37,7 @@ const Markup = () => {
     { url: "", component: <Dashboard /> },
     { url: "dashboard", component: <Dashboard /> },
     { url: "mesas", component: <Mesas /> },
+    { url: "para-llevar", component: <ParaLlevar /> },
     { url: "cuenta/:id", component: <CuentaDetail /> },
     { url: "cocina", component: <Cocina /> },
     { url: "menu-admin", component: <MenuAdmin /> },

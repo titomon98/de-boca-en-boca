@@ -21,13 +21,19 @@ import { SettingsModule } from './modules/settings/settings.module';
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => ({
         type: 'postgres',
-        url: configService.get<string>('DATABASE_URL'),
+        host: configService.get<string>('DB_HOST', 'localhost'),
+        port: Number(configService.get<string>('DB_PORT', '5432')),
+        database: configService.get<string>('DB_NAME', 'postgres'),
+        username: configService.get<string>('DB_USER', 'postgres'),
+        password: configService.get<string>('DB_PASSWORD'),
         schema: configService.get<string>('DB_SCHEMA') || 'restaurante',
         autoLoadEntities: true,
         synchronize: false, // En producción/Supabase siempre usar false
-        ssl: {
-          rejectUnauthorized: false, // Necesario para la conexión SSL con Supabase
-        },
+        // SSL solo cuando DB_SSL=true (Supabase). En local Postgres va sin SSL.
+        ssl:
+          configService.get<string>('DB_SSL', 'false') === 'true'
+            ? { rejectUnauthorized: false }
+            : false,
       }),
     }),
     AuthModule,

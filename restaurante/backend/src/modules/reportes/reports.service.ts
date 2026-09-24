@@ -57,9 +57,16 @@ export class ReportsService {
     };
   }
 
-  /** Platillos más vendidos por cantidad e ingresos en un rango. */
+  /**
+   * Platillos más vendidos por cantidad e ingresos en un rango.
+   * Los COMBOS cuentan como producto (con su ingreso de paquete) y además se
+   * desglosan sus componentes ligados (cantidad, ingreso 0), así el ranking
+   * refleja el volumen real de cada producto vendido, también dentro de combos.
+   */
   async topItems(from?: string, to?: string, limit = 10) {
     const r = this.range(from, to);
+
+    // 1) Renglones normales (incluye el propio combo como producto vendido).
     const rows = await this.orderItemsRepository
       .createQueryBuilder('item')
       .innerJoin('item.order', 'order')
@@ -72,16 +79,54 @@ export class ReportsService {
       .addSelect('SUM(item.subtotal)', 'revenue')
       .groupBy('menuItem.id')
       .addGroupBy('menuItem.name')
-      .orderBy('quantity', 'DESC')
-      .limit(limit)
       .getRawMany();
 
-    return rows.map((r2) => ({
-      menuItemId: Number(r2.menuItemId),
-      menuItemName: r2.menuItemName,
-      quantity: Number(r2.quantity),
-      revenue: round2(Number(r2.revenue)),
-    }));
+    // 2) Componentes de combos (desglose), con ingreso 0.
+    const componentRows = await this.orderItemsRepository.query(
+      `SELECT (c->>'itemId')::int AS "menuItemId",
+              MAX(c->>'name')      AS "menuItemName",
+              SUM((c->>'quantity')::numeric) AS "quantity"
+         FROM restaurante.order_items oi
+         JOIN restaurante.orders o ON o.id = oi.order_id
+         CROSS JOIN LATERAL jsonb_array_elements(oi.components) AS c
+        WHERE oi.components IS NOT NULL
+          AND o.status <> 'cancelled'
+          AND CAST(o.created_at AS DATE) BETWEEN $1 AND $2
+        GROUP BY (c->>'itemId')::int`,
+      [r.from, r.to],
+    );
+
+    // 3) Fusionar por producto (suma cantidad; ingreso solo de renglones reales).
+    const merged = new Map<
+      number,
+      { menuItemId: number; menuItemName: string; quantity: number; revenue: number }
+    >();
+    for (const row of rows) {
+      merged.set(Number(row.menuItemId), {
+        menuItemId: Number(row.menuItemId),
+        menuItemName: row.menuItemName,
+        quantity: Number(row.quantity),
+        revenue: round2(Number(row.revenue)),
+      });
+    }
+    for (const row of componentRows) {
+      const id = Number(row.menuItemId);
+      const existing = merged.get(id);
+      if (existing) {
+        existing.quantity += Number(row.quantity);
+      } else {
+        merged.set(id, {
+          menuItemId: id,
+          menuItemName: row.menuItemName,
+          quantity: Number(row.quantity),
+          revenue: 0,
+        });
+      }
+    }
+
+    return Array.from(merged.values())
+      .sort((a, b) => b.quantity - a.quantity)
+      .slice(0, limit);
   }
 
   /**

@@ -51,6 +51,11 @@ export class PosService {
       if (account.status === 'paid' || account.status === 'cancelled') {
         throw new BadRequestException('La cuenta ya está cerrada');
       }
+      if (Number(account.total) <= 0) {
+        throw new BadRequestException(
+          'No hay nada que cobrar: la cuenta está en Q0',
+        );
+      }
 
       const amount = round2(dto.amount);
       const alreadyPaid = await this.sumPayments(manager, account.id);

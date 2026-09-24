@@ -73,6 +73,8 @@ export const AUDIT_ACTIONS = {
   pago_registrado: 'Pago registrado',
   cuenta_pagada: 'Cuenta pagada',
   cuenta_anulada: 'Cuenta anulada',
+  orden_entregada: 'Orden entregada',
+  orden_pendiente_entrega: 'Orden marcada pendiente de entrega',
 };
 
 /** Metadatos de estado de comanda. */

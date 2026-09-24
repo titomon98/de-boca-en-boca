@@ -43,7 +43,7 @@ const Reportes = () => {
 	const exportPDF = () => {
 		const doc = new jsPDF();
 		doc.setFontSize(16);
-		doc.text('De Boca en Boca — Reporte', 14, 18);
+		doc.text('De Boca en Boca - Reporte', 14, 18);
 		doc.setFontSize(10);
 		doc.text(`Rango: ${rangeLabel}`, 14, 25);
 		doc.text(`Ventas totales: ${money(summary.total)}   ·   Cobros: ${summary.paymentsCount}`, 14, 31);
@@ -83,7 +83,7 @@ const Reportes = () => {
 		const wb = XLSX.utils.book_new();
 
 		const resumen = [
-			['De Boca en Boca — Reporte'],
+			['De Boca en Boca - Reporte'],
 			['Rango', rangeLabel],
 			['Ventas totales', Number(summary.total)],
 			['Cobros', summary.paymentsCount],
@@ -133,7 +133,7 @@ const Reportes = () => {
 			chart: { type: 'bar', toolbar: { show: false } },
 			plotOptions: { bar: { horizontal: true, borderRadius: 4 } },
 			dataLabels: { enabled: false },
-			colors: ['#D62828'],
+			colors: ['#F5C518'],
 			xaxis: { categories: top.map((t) => t.menuItemName) },
 		},
 	};
@@ -189,7 +189,7 @@ const Reportes = () => {
 								<Card.Body>
 									<span className="text-muted d-block mb-1">Por forma de pago</span>
 									{Object.keys(summary.byPaymentMethod || {}).length === 0 ? (
-										<span>—</span>
+										<span>-</span>
 									) : (
 										Object.entries(summary.byPaymentMethod).map(([k, v]) => (
 											<div key={k} className="d-flex justify-content-between">

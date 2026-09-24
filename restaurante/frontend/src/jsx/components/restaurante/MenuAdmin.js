@@ -4,7 +4,9 @@ import swal from 'sweetalert';
 import { MenuApi } from '../../../services/RestaurantApi';
 import { money } from '../../../services/helpers';
 
-const emptyItem = { name: '', description: '', categoryId: '', price: '', type: 'food', available: true, image: '' };
+// combo: [{ itemId, quantity }] productos que trae el combo.
+// choiceGroups: [{ label, choose, optionItemIds:[...] }] opciones a elegir.
+const emptyItem = { name: '', description: '', categoryId: '', price: '', type: 'food', available: true, image: '', combo: [], choiceGroups: [] };
 
 /** Lee un archivo de imagen y lo reduce a un data URL base64 compacto. */
 function fileToBase64(file, maxSize = 600) {
@@ -44,6 +46,7 @@ const MenuAdmin = () => {
 	const [form, setForm] = useState(emptyItem);
 	const [showCat, setShowCat] = useState(false);
 	const [catName, setCatName] = useState('');
+	const [comboItem, setComboItem] = useState(null); // combo en vista de "qué incluye"
 	const [editCat, setEditCat] = useState(null); // categoría en edición
 	const [editCatName, setEditCatName] = useState('');
 
@@ -67,9 +70,54 @@ const MenuAdmin = () => {
 			type: it.type,
 			available: it.available,
 			image: it.image || '',
+			combo: (it.combo?.components || []).map((c) => ({ itemId: c.itemId, quantity: c.quantity })),
+			choiceGroups: (it.choiceGroups || []).map((g) => ({
+				label: g.label,
+				choose: g.choose || 1,
+				optionItemIds: [...(g.optionItemIds || [])],
+			})),
 		});
 		setShow(true);
 	};
+
+	// --- Grupos de elección (productos reales) ---
+	const addGroup = () =>
+		setForm((f) => ({ ...f, choiceGroups: [...(f.choiceGroups || []), { label: '', choose: 1, optionItemIds: [] }] }));
+	const updateGroup = (idx, key, value) =>
+		setForm((f) => ({
+			...f,
+			choiceGroups: f.choiceGroups.map((g, i) => (i === idx ? { ...g, [key]: value } : g)),
+		}));
+	const toggleGroupOption = (idx, itemId) =>
+		setForm((f) => ({
+			...f,
+			choiceGroups: f.choiceGroups.map((g, i) => {
+				if (i !== idx) return g;
+				const has = g.optionItemIds.includes(itemId);
+				return { ...g, optionItemIds: has ? g.optionItemIds.filter((x) => x !== itemId) : [...g.optionItemIds, itemId] };
+			}),
+		}));
+	const removeGroup = (idx) =>
+		setForm((f) => ({ ...f, choiceGroups: f.choiceGroups.filter((_, i) => i !== idx) }));
+
+	// --- Vista "qué incluye el combo" ---
+	const productName = (id) => items.find((mi) => mi.id === id)?.name || `#${id}`;
+	const editFromCombo = () => {
+		const it = comboItem;
+		setComboItem(null);
+		openEdit(it);
+	};
+
+	// --- Componentes del combo ---
+	const addComponent = () =>
+		setForm((f) => ({ ...f, combo: [...(f.combo || []), { itemId: '', quantity: 1 }] }));
+	const updateComponent = (idx, key, value) =>
+		setForm((f) => ({
+			...f,
+			combo: f.combo.map((c, i) => (i === idx ? { ...c, [key]: value } : c)),
+		}));
+	const removeComponent = (idx) =>
+		setForm((f) => ({ ...f, combo: f.combo.filter((_, i) => i !== idx) }));
 
 	const onPickImage = async (e) => {
 		const file = e.target.files?.[0];
@@ -95,6 +143,20 @@ const MenuAdmin = () => {
 			type: form.type,
 			available: form.available,
 			image: form.image || undefined,
+			includes: null,
+			combo: (() => {
+				const components = (form.combo || [])
+					.filter((c) => c.itemId)
+					.map((c) => ({ itemId: Number(c.itemId), quantity: Math.max(1, Number(c.quantity) || 1) }));
+				return components.length ? { components } : null;
+			})(),
+			choiceGroups: (form.choiceGroups || [])
+				.filter((g) => g.label.trim() && g.optionItemIds.length > 0)
+				.map((g) => ({
+					label: g.label.trim(),
+					choose: Math.max(1, Number(g.choose) || 1),
+					optionItemIds: g.optionItemIds.map(Number),
+				})),
 		};
 		try {
 			if (editing) await MenuApi.update(editing.id, dto);
@@ -204,10 +266,15 @@ const MenuAdmin = () => {
 										)}
 									</td>
 									<td>
-										<div className="font-w600">{it.name}</div>
+										<div className="font-w600">
+											{it.name}
+											{it.combo?.components?.length > 0 && (
+												<Badge bg="warning" text="dark" className="ms-2">Combo</Badge>
+											)}
+										</div>
 										{it.description && <small className="text-muted">{it.description}</small>}
 									</td>
-									<td>{it.category?.name || '—'}</td>
+									<td>{it.category?.name || '-'}</td>
 									<td>{it.type === 'drink' ? 'Bebida' : 'Comida'}</td>
 									<td className="text-end">{money(it.price)}</td>
 									<td>
@@ -216,6 +283,11 @@ const MenuAdmin = () => {
 										</Badge>
 									</td>
 									<td className="text-end">
+										{it.combo?.components?.length > 0 && (
+											<Button size="sm" variant="outline-warning" className="me-1" title="Ver qué incluye el combo" onClick={() => setComboItem(it)}>
+												<i className="fa-solid fa-box-open"></i>
+											</Button>
+										)}
 										<Button size="sm" variant="light" className="me-1" onClick={() => openEdit(it)}>
 											<i className="bi bi-pencil"></i>
 										</Button>
@@ -301,6 +373,65 @@ const MenuAdmin = () => {
 							/>
 						</Col>
 					</Row>
+
+					<hr />
+					<div className="d-flex justify-content-between align-items-center mb-2">
+						<Form.Label className="mb-0">Productos que trae el combo</Form.Label>
+						<Button size="sm" variant="outline-primary" onClick={addComponent}>
+							<i className="fa-solid fa-plus me-1"></i>Agregar producto
+						</Button>
+					</div>
+					{(form.combo || []).map((c, idx) => (
+						<Row className="g-2 mb-2 align-items-center" key={idx}>
+							<Col xs={8}>
+								<Form.Select size="sm" value={c.itemId} onChange={(e) => updateComponent(idx, 'itemId', e.target.value)}>
+									<option value="">Seleccione un producto</option>
+									{items.filter((mi) => !editing || mi.id !== editing.id).map((mi) => (
+										<option key={mi.id} value={mi.id}>{mi.name}</option>
+									))}
+								</Form.Select>
+							</Col>
+							<Col xs={3}>
+								<Form.Control size="sm" type="number" min={1} title="Cantidad" value={c.quantity} onChange={(e) => updateComponent(idx, 'quantity', e.target.value)} />
+							</Col>
+							<Col xs={1} className="text-end">
+								<Button size="sm" variant="light" className="text-danger px-1" onClick={() => removeComponent(idx)}>
+									<i className="fa-solid fa-xmark"></i>
+								</Button>
+							</Col>
+						</Row>
+					))}
+
+					<hr />
+					<div className="d-flex justify-content-between align-items-center mb-2">
+						<Form.Label className="mb-0">Opciones a elegir</Form.Label>
+						<Button size="sm" variant="outline-primary" onClick={addGroup}>
+							<i className="fa-solid fa-plus me-1"></i>Agregar opción
+						</Button>
+					</div>
+					{(form.choiceGroups || []).map((g, idx) => (
+						<div className="border rounded p-2 mb-2" key={idx}>
+							<Row className="g-2 align-items-center mb-2">
+								<Col xs={7}>
+									<Form.Control size="sm" placeholder="Ingrese nombre de la opción" value={g.label} onChange={(e) => updateGroup(idx, 'label', e.target.value)} />
+								</Col>
+								<Col xs={4}>
+									<Form.Control size="sm" type="number" min={1} title="Cuantos elige el cliente" value={g.choose} onChange={(e) => updateGroup(idx, 'choose', e.target.value)} />
+								</Col>
+								<Col xs={1} className="text-end">
+									<Button size="sm" variant="light" className="text-danger px-1" onClick={() => removeGroup(idx)}>
+										<i className="fa-solid fa-xmark"></i>
+									</Button>
+								</Col>
+							</Row>
+							<div className="small text-muted mb-1">Productos que puede elegir:</div>
+							<div className="d-flex flex-wrap gap-2">
+								{items.filter((mi) => !editing || mi.id !== editing.id).map((mi) => (
+									<Form.Check key={mi.id} type="checkbox" id={`g${idx}-i${mi.id}`} label={mi.name} checked={g.optionItemIds.includes(mi.id)} onChange={() => toggleGroupOption(idx, mi.id)} />
+								))}
+							</div>
+						</div>
+					))}
 				</Modal.Body>
 				<Modal.Footer>
 					<Button variant="light" onClick={() => setShow(false)}>Cancelar</Button>
@@ -361,6 +492,54 @@ const MenuAdmin = () => {
 				</Modal.Body>
 				<Modal.Footer>
 					<Button variant="light" onClick={() => { setShowCat(false); setEditCat(null); }}>Cerrar</Button>
+				</Modal.Footer>
+			</Modal>
+
+			{/* Modal: qué incluye el combo */}
+			<Modal show={!!comboItem} onHide={() => setComboItem(null)} centered>
+				<Modal.Header closeButton>
+					<Modal.Title>
+						{comboItem?.name} <Badge bg="warning" text="dark">Combo</Badge>
+					</Modal.Title>
+				</Modal.Header>
+				<Modal.Body>
+					<div className="d-flex justify-content-between mb-3">
+						<span className="text-muted">Precio de paquete</span>
+						<strong>{comboItem && money(comboItem.price)}</strong>
+					</div>
+
+					<h6 className="mb-2">Productos incluidos</h6>
+					{comboItem?.combo?.components?.length > 0 ? (
+						<ul className="mb-3">
+							{comboItem.combo.components.map((c) => (
+								<li key={c.itemId}>
+									{c.quantity > 1 ? `${c.quantity}x ` : ''}{productName(c.itemId)}
+								</li>
+							))}
+						</ul>
+					) : (
+						<p className="text-muted">Sin productos fijos.</p>
+					)}
+
+					{comboItem?.choiceGroups?.length > 0 && (
+						<>
+							<h6 className="mb-2">Opciones a elegir</h6>
+							<ul className="mb-0">
+								{comboItem.choiceGroups.map((g) => (
+									<li key={g.label}>
+										<strong>{g.label}</strong>: el cliente elige {g.choose} entre{' '}
+										{g.optionItemIds.map((id) => productName(id)).join(', ')}
+									</li>
+								))}
+							</ul>
+						</>
+					)}
+				</Modal.Body>
+				<Modal.Footer>
+					<Button variant="light" onClick={() => setComboItem(null)}>Cerrar</Button>
+					<Button variant="primary" onClick={editFromCombo}>
+						<i className="bi bi-pencil me-1"></i>Editar combo
+					</Button>
 				</Modal.Footer>
 			</Modal>
 		</>

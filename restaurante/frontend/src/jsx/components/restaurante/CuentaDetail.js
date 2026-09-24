@@ -22,8 +22,13 @@ const CuentaDetail = () => {
 	const [menu, setMenu] = useState([]);
 	const [categories, setCategories] = useState([]);
 	const [activeCat, setActiveCat] = useState('all');
-	const [cart, setCart] = useState([]); // { menuItem, quantity, notes }
+	const [cart, setCart] = useState([]); // { lineId, menuItem, quantity, notes, choices, chosenItemIds }
 	const [orderNotes, setOrderNotes] = useState('');
+
+	// selección de extras incluidos (ej. sabor del aderezo) al agregar un platillo
+	const [showConfig, setShowConfig] = useState(false);
+	const [configItem, setConfigItem] = useState(null);
+	const [configChoices, setConfigChoices] = useState({});
 	const [sending, setSending] = useState(false);
 	const [logs, setLogs] = useState([]);
 	const [payments, setPayments] = useState([]);
@@ -62,28 +67,62 @@ const CuentaDetail = () => {
 		load();
 	}, [load]);
 
+	// Opciones a elegir del platillo (productos: aderezos, etc.).
+	const choiceGroups = (item) => item.choiceGroups || [];
+	// Nombre de un producto por id (para mostrar los elegidos).
+	const productName = (id) => (menu || []).find((x) => x.id === id)?.name || `#${id}`;
+
 	const addToCart = (item) => {
+		// Si el platillo tiene opciones a elegir, primero se pregunta (modal).
+		if (choiceGroups(item).length > 0) {
+			setConfigItem(item);
+			// configChoices: { [label]: [itemId1, itemId2, ...] } según cuántos se eligen.
+			setConfigChoices(
+				Object.fromEntries(
+					choiceGroups(item).map((g) => [g.label, Array(Math.max(1, g.choose)).fill(g.optionItemIds[0])]),
+				),
+			);
+			setShowConfig(true);
+			return;
+		}
 		setCart((prev) => {
-			const found = prev.find((x) => x.menuItem.id === item.id);
+			// Une con una línea idéntica (mismo platillo, sin elecciones).
+			const found = prev.find((x) => x.menuItem.id === item.id && (x.chosenItemIds || []).length === 0);
 			if (found) {
-				return prev.map((x) =>
-					x.menuItem.id === item.id ? { ...x, quantity: x.quantity + 1 } : x,
-				);
+				return prev.map((x) => (x === found ? { ...x, quantity: x.quantity + 1 } : x));
 			}
-			return [...prev, { menuItem: item, quantity: 1, notes: '' }];
+			return [...prev, { lineId: `${item.id}-${Date.now()}`, menuItem: item, quantity: 1, notes: '', choices: [], chosenItemIds: [] }];
 		});
 	};
 
-	const setQty = (itemId, qty) => {
+	// Confirma los productos elegidos y agrega el platillo como línea propia.
+	const confirmConfig = () => {
+		const item = configItem;
+		// choices: ["Aderezo: Ranch, BBQ"]; chosenItemIds: [id, id]
+		const choices = Object.entries(configChoices).map(([label, ids]) =>
+			`${label}: ${(Array.isArray(ids) ? ids : [ids]).map((id) => productName(Number(id))).join(', ')}`,
+		);
+		const chosenItemIds = Object.values(configChoices)
+			.flatMap((ids) => (Array.isArray(ids) ? ids : [ids]))
+			.map((id) => Number(id));
+		setCart((prev) => [
+			...prev,
+			{ lineId: `${item.id}-${Date.now()}`, menuItem: item, quantity: 1, notes: '', choices, chosenItemIds },
+		]);
+		setShowConfig(false);
+		setConfigItem(null);
+	};
+
+	const setQty = (lineId, qty) => {
 		setCart((prev) =>
 			prev
-				.map((x) => (x.menuItem.id === itemId ? { ...x, quantity: Math.max(0, qty) } : x))
+				.map((x) => (x.lineId === lineId ? { ...x, quantity: Math.max(0, qty) } : x))
 				.filter((x) => x.quantity > 0),
 		);
 	};
 
-	const setNote = (itemId, notes) => {
-		setCart((prev) => prev.map((x) => (x.menuItem.id === itemId ? { ...x, notes } : x)));
+	const setNote = (lineId, notes) => {
+		setCart((prev) => prev.map((x) => (x.lineId === lineId ? { ...x, notes } : x)));
 	};
 
 	const cartTotal = cart.reduce((s, x) => s + Number(x.menuItem.price) * x.quantity, 0);
@@ -98,11 +137,16 @@ const CuentaDetail = () => {
 			await OrdersApi.create({
 				accountId: Number(id),
 				notes: orderNotes || undefined,
-				items: cart.map((x) => ({
-					menuItemId: x.menuItem.id,
-					quantity: x.quantity,
-					notes: x.notes || undefined,
-				})),
+				items: cart.map((x) => {
+					const ch = (x.choices || []).length ? x.choices.join('; ') : '';
+					const notes = [ch, x.notes].filter(Boolean).join(' · ');
+					return {
+						menuItemId: x.menuItem.id,
+						quantity: x.quantity,
+						notes: notes || undefined,
+						chosenItemIds: (x.chosenItemIds || []).length ? x.chosenItemIds : undefined,
+					};
+				}),
 			});
 			setCart([]);
 			setOrderNotes('');
@@ -254,20 +298,35 @@ const CuentaDetail = () => {
 
 	const remaining = Math.max(Number(account.total) - paid, 0);
 	const closed = account.status === 'paid' || account.status === 'cancelled';
+	// "Para llevar" es una orden, no una mesa: no aplica unir mesas.
+	const isTakeout = (account.tables || []).some((t) => t.isTakeout || t.number === 0);
+	const backTo = isTakeout ? '/para-llevar' : '/mesas';
+	// No se puede cobrar una cuenta en Q0 (no se ha ordenado nada).
+	const nothingToCharge = Number(account.total) <= 0;
 	const filteredMenu = activeCat === 'all'
 		? menu
 		: menu.filter((m) => m.categoryId === Number(activeCat));
+
+	// Nombres de productos para desglosar los componentes de un combo.
+	const nameById = Object.fromEntries((menu || []).map((x) => [x.id, x.name]));
+	const comboText = (item) =>
+		(item.combo?.components || [])
+			.map((c) => `${c.quantity > 1 ? `${c.quantity}x ` : ''}${nameById[c.itemId] || 'producto'}`)
+			.join(', ');
 
 	return (
 		<>
 			<div className="d-flex justify-content-between align-items-center flex-wrap mb-3">
 				<div>
-					<Button variant="light" size="sm" className="mb-2" onClick={() => navigate('/mesas')}>
-						<i className="bi bi-arrow-left me-1"></i>Mesas
+					<Button variant="light" size="sm" className="mb-2" onClick={() => navigate(backTo)}>
+						<i className="bi bi-arrow-left me-1"></i>{isTakeout ? 'Para llevar' : 'Mesas'}
 					</Button>
 					<h3 className="mb-0">{account.label}</h3>
 					<span className="text-muted">
-						Mesa(s): {(account.tables || []).map((t) => t.number).join(', ')} ·{' '}
+						{isTakeout
+							? 'Para llevar'
+							: `Mesa(s): ${(account.tables || []).map((t) => t.number).join(', ')}`}{' '}
+						·{' '}
 						<Badge bg={account.status === 'billing' ? 'danger' : account.status === 'paid' ? 'success' : 'warning'}>
 							{account.status === 'billing' ? 'Cobrando' : account.status === 'paid' ? 'Pagada' : account.status === 'cancelled' ? 'Anulada' : 'Abierta'}
 						</Badge>
@@ -281,18 +340,30 @@ const CuentaDetail = () => {
 
 			{!closed && (
 				<div className="d-flex gap-2 mb-3 flex-wrap">
-					{canOrder && account.status === 'open' && (
+					{canOrder && account.status === 'open' && !isTakeout && (
 						<Button variant="outline-secondary" size="sm" onClick={openJoin}>
 							<i className="bi bi-link-45deg me-1"></i>Unir mesas
 						</Button>
 					)}
 					{account.status === 'open' && (
-						<Button variant="outline-danger" size="sm" onClick={markBilling}>
+						<Button
+							variant="outline-danger"
+							size="sm"
+							onClick={markBilling}
+							disabled={nothingToCharge}
+							title={nothingToCharge ? 'La cuenta está en Q0' : undefined}
+						>
 							<i className="bi bi-receipt me-1"></i>Marcar cobrando
 						</Button>
 					)}
 					{canPay && (
-						<Button variant="success" size="sm" onClick={openPay}>
+						<Button
+							variant="success"
+							size="sm"
+							onClick={openPay}
+							disabled={nothingToCharge}
+							title={nothingToCharge ? 'La cuenta está en Q0' : undefined}
+						>
 							<i className="bi bi-cash-stack me-1"></i>Cobrar
 						</Button>
 					)}
@@ -332,7 +403,7 @@ const CuentaDetail = () => {
 															<td style={{ width: 50 }}>{it.quantity}×</td>
 															<td>
 																{it.menuItem?.name}
-																{it.notes && <span className="text-muted small d-block">↳ {it.notes}</span>}
+																{it.notes && <span className="text-muted small d-block">{it.notes}</span>}
 															</td>
 															<td className="text-end">{money(it.subtotal)}</td>
 																{canEditOrder && (<td className="text-end" style={{ width: 36 }}><Button size="sm" variant="light" className="text-danger py-0 px-1" title="Anular platillo" onClick={() => cancelItem(o, it)}><i className="fa-solid fa-xmark"></i></Button></td>)}
@@ -341,7 +412,7 @@ const CuentaDetail = () => {
 												</tbody>
 											</Table>
 											<div className="d-flex gap-3 flex-wrap small text-muted">
-												<span><i className="fa-solid fa-user me-1"></i>Mesero: {o.waiter?.name || '—'}</span>
+												<span><i className="fa-solid fa-user me-1"></i>Mesero: {o.waiter?.name || '-'}</span>
 												<span><i className="fa-solid fa-utensils me-1"></i>Cocina: {o.cook?.name || 'sin atender'}</span>
 											</div>
 										</div>
@@ -381,8 +452,22 @@ const CuentaDetail = () => {
 													<div className="d-flex align-items-center justify-content-center bg-light text-muted me-2" style={{ width: 40, height: 40, borderRadius: 8 }}><i className="fa-solid fa-utensils"></i></div>
 												)}
 												<div>
-													<div className="font-w600">{m.name}</div>
+													<div className="font-w600">
+														{m.name}
+														{m.combo?.components?.length > 0 && (
+															<span className="badge bg-warning text-dark ms-2">Combo</span>
+														)}
+													</div>
 													<small className="text-muted">{money(m.price)}</small>
+													{m.combo?.components?.length > 0 && (
+														<small className="text-muted d-block">Contiene: {comboText(m)}</small>
+													)}
+													{m.choiceGroups?.length > 0 && (
+														<small className="text-primary d-block">
+															<i className="fa-solid fa-hand-pointer me-1"></i>
+															A elegir: {m.choiceGroups.map((g) => (g.choose > 1 ? `${g.choose} ${g.label}` : g.label)).join(', ')}
+														</small>
+													)}
 												</div>
 											</div>
 											<Button size="sm" variant="outline-primary" onClick={() => addToCart(m)}>
@@ -396,21 +481,27 @@ const CuentaDetail = () => {
 									<>
 										<hr />
 										{cart.map((x) => (
-											<div key={x.menuItem.id} className="mb-2">
+											<div key={x.lineId} className="mb-2">
 												<div className="d-flex justify-content-between align-items-center">
 													<span className="text-truncate">{x.menuItem.name}</span>
 													<div className="d-flex align-items-center gap-1">
-														<Button size="sm" variant="light" onClick={() => setQty(x.menuItem.id, x.quantity - 1)}>−</Button>
+														<Button size="sm" variant="light" onClick={() => setQty(x.lineId, x.quantity - 1)}>−</Button>
 														<span className="px-2">{x.quantity}</span>
-														<Button size="sm" variant="light" onClick={() => setQty(x.menuItem.id, x.quantity + 1)}>+</Button>
+														<Button size="sm" variant="light" onClick={() => setQty(x.lineId, x.quantity + 1)}>+</Button>
 													</div>
 												</div>
+												{x.menuItem.combo?.components?.length > 0 && (
+													<div className="small text-muted">Contiene: {comboText(x.menuItem)}</div>
+												)}
+												{(x.choices || []).length > 0 && (
+													<div className="small text-primary">{x.choices.join('; ')}</div>
+												)}
 												<Form.Control
 													size="sm"
 													className="mt-1"
-													placeholder="Nota (ej. sin cebolla)"
+													placeholder="Ingrese una nota"
 													value={x.notes}
-													onChange={(e) => setNote(x.menuItem.id, e.target.value)}
+													onChange={(e) => setNote(x.lineId, e.target.value)}
 												/>
 											</div>
 										))}
@@ -504,6 +595,55 @@ const CuentaDetail = () => {
 				<Modal.Footer>
 					<Button variant="light" onClick={() => setShowPay(false)}>Cancelar</Button>
 					<Button variant="success" onClick={submitPay}>Registrar pago</Button>
+				</Modal.Footer>
+			</Modal>
+
+			{/* Modal: elegir opciones de los extras incluidos */}
+			<Modal show={showConfig} onHide={() => setShowConfig(false)} centered>
+				<Modal.Header closeButton>
+					<Modal.Title>{configItem?.name}</Modal.Title>
+				</Modal.Header>
+				<Modal.Body>
+					{configItem && configItem.combo?.components?.length > 0 && (
+						<>
+							<p className="text-muted mb-1">Incluye:</p>
+							<ul>
+								{configItem.combo.components.map((cc) => (
+									<li key={`c${cc.itemId}`}>{cc.quantity > 1 ? `${cc.quantity}x ` : ''}{productName(cc.itemId)}</li>
+								))}
+							</ul>
+						</>
+					)}
+					{configItem && choiceGroups(configItem).map((g) => (
+						<Form.Group className="mb-3" key={g.label}>
+							<Form.Label>
+								{g.label}
+								{g.choose > 1 ? ` - elija ${g.choose}` : ' - elija una opción'}
+							</Form.Label>
+							{Array.from({ length: Math.max(1, g.choose) }).map((_, idx) => (
+								<Form.Select
+									key={idx}
+									className={idx > 0 ? 'mt-2' : ''}
+									value={(configChoices[g.label] || [])[idx] ?? g.optionItemIds[0]}
+									onChange={(e) =>
+										setConfigChoices((cc) => {
+											const arr = [...(cc[g.label] || Array(Math.max(1, g.choose)).fill(g.optionItemIds[0]))];
+											arr[idx] = Number(e.target.value);
+											return { ...cc, [g.label]: arr };
+										})
+									}
+								>
+									{g.optionItemIds.map((oid) => (
+										<option key={oid} value={oid}>{productName(oid)}</option>
+									))}
+								</Form.Select>
+							))}
+						</Form.Group>
+					))}
+				</Modal.Body>
+				<Modal.Footer>
+					<Button variant="light" onClick={() => setShowConfig(false)}>Cancelar</Button>
+					<Button variant="primary" onClick={confirmConfig}>Agregar</Button>
 				</Modal.Footer>
 			</Modal>
 

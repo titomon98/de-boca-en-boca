@@ -58,6 +58,22 @@ CREATE TABLE IF NOT EXISTS restaurante.menu_items (
 );
 -- image: foto del platillo en base64 (data URL). ALTER idempotente:
 ALTER TABLE restaurante.menu_items ADD COLUMN IF NOT EXISTS image TEXT;
+-- includes: extras que el platillo YA incluye (no se cobran). JSON array de
+-- { "label": "Papas fritas" } o { "label": "Aderezo", "options": ["Ranch","Búfalo"] }.
+-- Si trae "options", al agregarlo se pregunta cuál. ALTER idempotente:
+ALTER TABLE restaurante.menu_items ADD COLUMN IF NOT EXISTS includes JSONB;
+-- combo: si no es NULL, el platillo es un COMBO. Sus componentes se ligan a
+-- productos reales del menú (para que reportes/inventario los cuenten):
+-- { "components": [ { "itemId": 12, "quantity": 1 }, ... ] }.
+-- El precio del combo es el del propio menu_item (precio de paquete); los
+-- componentes no se cobran aparte. Las elecciones de condimento (aderezos)
+-- siguen viviendo en `includes`. ALTER idempotente:
+ALTER TABLE restaurante.menu_items ADD COLUMN IF NOT EXISTS combo JSONB;
+-- choice_groups: grupos de elección ligados a PRODUCTOS reales (ej. "elige 2
+-- aderezos" de un set). Los elegidos entran como componentes a Q0 y se cuentan
+-- en reportes/inventario (los aderezos también se venden por aparte):
+-- [ { "label": "Aderezo", "choose": 2, "optionItemIds": [20,21,22,23] } ].
+ALTER TABLE restaurante.menu_items ADD COLUMN IF NOT EXISTS choice_groups JSONB;
 
 -- Cuenta (comanda de cobro). Una cuenta puede abarcar VARIAS mesas (unión)
 -- y una misma mesa puede tener VARIAS cuentas abiertas (cuentas separadas).
@@ -71,6 +87,9 @@ CREATE TABLE IF NOT EXISTS restaurante.accounts (
   opened_at TIMESTAMP NOT NULL DEFAULT now(),
   closed_at TIMESTAMP
 );
+-- delivered_at: entrega (para llevar). Independiente del cobro: una orden puede
+-- estar entregada sin cobrar, o cobrada sin entregar. NULL = pendiente de entrega.
+ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP;
 
 -- Relación cuenta <-> mesas (soporta unión de mesas y cuentas separadas por mesa).
 CREATE TABLE IF NOT EXISTS restaurante.account_tables (
@@ -106,6 +125,11 @@ CREATE TABLE IF NOT EXISTS restaurante.order_items (
   subtotal NUMERIC(12,2) NOT NULL,
   notes VARCHAR(255)
 );
+-- components: si el renglón es un COMBO, aquí quedan sus componentes ya resueltos
+-- (ligados a productos reales) para que los reportes los desglosen:
+-- [ { "itemId": 12, "name": "Papas fritas", "quantity": 1 }, ... ].
+-- El renglón del combo conserva el precio de paquete; los componentes van a Q0.
+ALTER TABLE restaurante.order_items ADD COLUMN IF NOT EXISTS components JSONB;
 
 -- Pagos (POS). Una cuenta puede liquidarse con uno o varios pagos.
 CREATE TABLE IF NOT EXISTS restaurante.payments (

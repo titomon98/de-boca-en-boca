@@ -67,6 +67,26 @@ export class AccountsService {
     return this.findOne(id);
   }
 
+  /**
+   * Marca la entrega de una orden (para llevar) como entregada o pendiente.
+   * Independiente del cobro: se puede entregar sin cobrar y viceversa.
+   */
+  async setDelivered(
+    accountId: number,
+    delivered: boolean,
+    user: AuthUser,
+  ): Promise<Account> {
+    const account = await this.findOne(accountId);
+    account.deliveredAt = delivered ? new Date() : null;
+    await this.accountsRepository.save(account);
+    await this.audit.log({
+      action: delivered ? 'orden_entregada' : 'orden_pendiente_entrega',
+      user,
+      accountId,
+    });
+    return this.findOne(accountId);
+  }
+
   /** Bitácora de auditoría de la cuenta. */
   getLogs(accountId: number) {
     return this.audit.findByAccount(accountId);
@@ -128,6 +148,11 @@ export class AccountsService {
       if (account.status !== 'open') {
         throw new BadRequestException(
           'Sólo una cuenta abierta puede pasar a cobro',
+        );
+      }
+      if (Number(account.total) <= 0) {
+        throw new BadRequestException(
+          'No hay nada que cobrar: la cuenta está en Q0',
         );
       }
       account.status = 'billing';
@@ -232,6 +257,23 @@ export class AccountsService {
     });
 
     return { deleted: true, id: accountId };
+  }
+
+  /**
+   * Órdenes "para llevar": las que están sobre la mesa is_takeout y aún no
+   * concluyen. Una orden concluye sólo cuando está cobrada Y entregada, así que
+   * sigue visible si le falta cualquiera de las dos (a diferencia de findOpen,
+   * que oculta las pagadas). No incluye anuladas.
+   */
+  findTakeout(): Promise<Account[]> {
+    return this.accountsRepository
+      .createQueryBuilder('a')
+      .innerJoinAndSelect('a.tables', 't')
+      .where('t.isTakeout = true')
+      .andWhere('a.status != :cancelled', { cancelled: 'cancelled' })
+      .andWhere(`NOT (a.status = 'paid' AND a.deliveredAt IS NOT NULL)`)
+      .orderBy('a.openedAt', 'ASC')
+      .getMany();
   }
 
   /** Cuentas activas (abiertas o en cobro). */
