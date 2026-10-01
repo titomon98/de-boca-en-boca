@@ -30,6 +30,14 @@ export class RestaurantTable {
   @Column({ name: 'is_takeout', type: 'boolean', default: false })
   isTakeout: boolean;
 
+  /** Salón del croquis: 'pequeno' o 'grande' (null para la de para llevar). */
+  @Column({ type: 'varchar', length: 20, nullable: true })
+  salon: string | null;
+
+  /** Nombre de mesas con nombre (ej. "Barra", "Pequeña"). Las numeradas usan su número. */
+  @Column({ type: 'varchar', length: 40, nullable: true })
+  name: string | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
   createdAt: Date;
 }

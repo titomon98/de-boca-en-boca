@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Card, Row, Col, Table, Badge, Spinner } from 'react-bootstrap';
 import { TablesApi, AccountsApi, ReportsApi } from '../../../services/RestaurantApi';
-import { money, getCurrentUser, ROLE_LABELS, TABLE_STATUS, todayGuatemala } from '../../../services/helpers';
+import { money, getCurrentUser, ROLE_LABELS, todayGuatemala } from '../../../services/helpers';
 
 const StatCard = ({ icon, color, label, value }) => (
 	<Col xl={3} sm={6}>
@@ -77,7 +77,7 @@ const Dashboard = () => {
 			</Row>
 
 			<Row>
-				<Col lg={7}>
+				<Col lg={12}>
 					<Card>
 						<Card.Header>
 							<Card.Title>Cuentas activas</Card.Title>
@@ -114,28 +114,6 @@ const Dashboard = () => {
 									</tbody>
 								</Table>
 							)}
-						</Card.Body>
-					</Card>
-				</Col>
-				<Col lg={5}>
-					<Card>
-						<Card.Header>
-							<Card.Title>Estado del salón</Card.Title>
-						</Card.Header>
-						<Card.Body>
-							<Row className="g-2">
-								{tables.map((t) => {
-									const meta = TABLE_STATUS[t.status] || TABLE_STATUS.free;
-									return (
-										<Col xs={3} key={t.id}>
-											<div className={`text-center p-2 rounded border border-${meta.color}`}>
-												<div className="font-w600">#{t.number}</div>
-												<small className={`text-${meta.color}`}>{meta.label}</small>
-											</div>
-										</Col>
-									);
-								})}
-							</Row>
 						</Card.Body>
 					</Card>
 				</Col>

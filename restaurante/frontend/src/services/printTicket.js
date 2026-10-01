@@ -4,11 +4,22 @@
  * configurada como predeterminada en el sistema operativo del equipo.
  */
 export function printTicket(order, opts = {}) {
-  const restaurante = opts.restaurante || 'Restaurante Demo';
-  const mesas = (order.account?.tables || []).map((t) => t.number).join(', ');
+  const restaurante = opts.restaurante || 'De Boca en Boca';
+  // Estación: si se indica `type` ('food'/'drink'), sólo se imprimen los
+  // renglones de esa estación (comida -> Cocina, bebida -> Barra).
+  const station = opts.station || 'COCINA';
+  const mesas = (order.account?.tables || [])
+    .map((t) => (t.isTakeout || t.number === 0 ? 'Para llevar' : t.name || t.number))
+    .join(', ');
   const fecha = new Date(order.createdAt || Date.now()).toLocaleString('es-GT');
 
-  const rows = (order.items || [])
+  const items = (order.items || []).filter(
+    (it) => !opts.type || (it.menuItem?.type || 'food') === opts.type,
+  );
+  // Nada para esta estación: no se imprime.
+  if (items.length === 0) return;
+
+  const rows = items
     .map(
       (it) => `
       <tr>
@@ -46,7 +57,7 @@ export function printTicket(order, opts = {}) {
     <table>${rows}</table>
     <hr/>
     ${order.notes ? `<div class="meta">Nota: ${escapeHtml(order.notes)}</div>` : ''}
-    <div class="foot">*** COCINA ***</div>
+    <div class="foot">*** ${escapeHtml(station)} ***</div>
   </body></html>`;
 
   const iframe = document.createElement('iframe');

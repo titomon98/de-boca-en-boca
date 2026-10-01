@@ -10,6 +10,16 @@ export class CreateCashClosingDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   countedCash?: number;
 
+  /** Tarjeta contada (suma de vouchers). */
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  countedCard?: number;
+
+  /** Transferencias contadas (suma de comprobantes). */
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  countedTransfer?: number;
+
   @IsOptional()
   @IsString()
   @MaxLength(255)

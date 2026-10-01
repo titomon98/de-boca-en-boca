@@ -7,9 +7,10 @@ import { AccountsService } from './accounts.service';
 import { TablesController } from './tables.controller';
 import { AccountsController } from './accounts.controller';
 import { AuditModule } from '../audit/audit.module';
+import { VenuesModule } from '../venues/venues.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([RestaurantTable, Account]), AuditModule],
+  imports: [TypeOrmModule.forFeature([RestaurantTable, Account]), AuditModule, VenuesModule],
   controllers: [TablesController, AccountsController],
   providers: [TablesService, AccountsService],
   exports: [TablesService, AccountsService],

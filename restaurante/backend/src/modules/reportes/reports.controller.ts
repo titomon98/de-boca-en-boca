@@ -29,8 +29,16 @@ export class ReportsController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit?: number,
+    @Query('categoryId') categoryId?: string,
+    @Query('combo') combo?: 'all' | 'combos' | 'no',
   ) {
-    return this.reportsService.topItems(from, to, limit);
+    return this.reportsService.topItems(
+      from,
+      to,
+      limit,
+      categoryId ? Number(categoryId) : undefined,
+      combo === 'combos' || combo === 'no' ? combo : 'all',
+    );
   }
 
   @Get('sales-by-day')

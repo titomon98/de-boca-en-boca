@@ -15,8 +15,10 @@ import ScrollToTop from "./layouts/ScrollToTop";
 import Dashboard from "./components/restaurante/Dashboard";
 import Mesas from "./components/restaurante/Mesas";
 import ParaLlevar from "./components/restaurante/ParaLlevar";
+import ADomicilio from "./components/restaurante/ADomicilio";
 import CuentaDetail from "./components/restaurante/CuentaDetail";
 import Cocina from "./components/restaurante/Cocina";
+import Barra from "./components/restaurante/Barra";
 import MenuAdmin from "./components/restaurante/MenuAdmin";
 import Caja from "./components/restaurante/Caja";
 import CierreCaja from "./components/restaurante/CierreCaja";
@@ -38,8 +40,10 @@ const Markup = () => {
     { url: "dashboard", component: <Dashboard /> },
     { url: "mesas", component: <Mesas /> },
     { url: "para-llevar", component: <ParaLlevar /> },
+    { url: "a-domicilio", component: <ADomicilio /> },
     { url: "cuenta/:id", component: <CuentaDetail /> },
     { url: "cocina", component: <Cocina /> },
+    { url: "barra", component: <Barra /> },
     { url: "menu-admin", component: <MenuAdmin /> },
     { url: "caja", component: <Caja /> },
     { url: "cierre-caja", component: <CierreCaja /> },

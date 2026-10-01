@@ -41,6 +41,20 @@ export class Payment {
   @Column({ name: 'payment_method', type: 'varchar', length: 30 })
   paymentMethod: string;
 
+  /** Si fue cobro "por producto", los renglones que cubrió (para revertir al anular). */
+  @Column({ name: 'item_ids', type: 'jsonb', nullable: true })
+  itemIds: number[] | null;
+
+  /** Propina recibida en este pago (aparte del saldo). */
+  @Column({
+    type: 'numeric',
+    precision: 12,
+    scale: 2,
+    default: 0,
+    transformer: numericTransformer,
+  })
+  tip: number;
+
   @CreateDateColumn({ name: 'date', type: 'timestamp' })
   date: Date;
 }

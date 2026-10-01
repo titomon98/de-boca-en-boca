@@ -52,6 +52,36 @@ export class CashClosing {
   totalCard: number;
 
   @Column({
+    name: 'total_transfer',
+    type: 'numeric',
+    precision: 12,
+    scale: 2,
+    default: 0,
+    transformer: numericTransformer,
+  })
+  totalTransfer: number;
+
+  @Column({
+    name: 'total_tips',
+    type: 'numeric',
+    precision: 12,
+    scale: 2,
+    default: 0,
+    transformer: numericTransformer,
+  })
+  totalTips: number;
+
+  @Column({
+    name: 'courier_cash',
+    type: 'numeric',
+    precision: 12,
+    scale: 2,
+    default: 0,
+    transformer: numericTransformer,
+  })
+  courierCash: number;
+
+  @Column({
     type: 'numeric',
     precision: 12,
     scale: 2,
@@ -59,6 +89,15 @@ export class CashClosing {
     transformer: numericTransformer,
   })
   difference: number;
+
+  @Column({ name: 'counted_cash', type: 'numeric', precision: 12, scale: 2, nullable: true, transformer: numericTransformer })
+  countedCash: number | null;
+
+  @Column({ name: 'counted_card', type: 'numeric', precision: 12, scale: 2, nullable: true, transformer: numericTransformer })
+  countedCard: number | null;
+
+  @Column({ name: 'counted_transfer', type: 'numeric', precision: 12, scale: 2, nullable: true, transformer: numericTransformer })
+  countedTransfer: number | null;
 
   @Column({ type: 'varchar', length: 255, nullable: true })
   notes: string | null;

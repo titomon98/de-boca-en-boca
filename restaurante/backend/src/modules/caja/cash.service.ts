@@ -6,16 +6,21 @@ import { Payment } from '../pos/entities/payment.entity';
 import { CreateCashClosingDto } from './dto/create-cash-closing.dto';
 import { round2 } from '../../common/utils/money';
 
-/** Métodos de pago que se contabilizan como efectivo / tarjeta. */
+/** Métodos de pago que se contabilizan como efectivo / tarjeta / transferencia. */
 const CASH_METHODS = ['cash', 'efectivo'];
 const CARD_METHODS = ['card', 'tarjeta'];
+const TRANSFER_METHODS = ['transfer', 'transferencia'];
 
 export interface CashSummary {
   since: Date | null;
   totalSales: number;
   totalCash: number;
   totalCard: number;
+  totalTransfer: number;
   totalOther: number;
+  totalTips: number;
+  courierCash: number;
+  expectedCash: number;
   paymentsCount: number;
 }
 
@@ -44,24 +49,58 @@ export class CashService {
       where: since ? { date: MoreThan(since) } : {},
     });
 
-    let totalCash = 0;
-    let totalCard = 0;
-    let totalOther = 0;
+    // Ventas por método (sin propina) y propina por método. La propina se
+    // reporta aparte de las ventas, pero es dinero real que entró por el mismo
+    // método, así que el "esperado" físico de cada método la incluye.
+    let salesCash = 0;
+    let salesCard = 0;
+    let salesTransfer = 0;
+    let salesOther = 0;
+    let tipCash = 0;
+    let tipCard = 0;
+    let tipTransfer = 0;
+    let tipOther = 0;
 
     for (const payment of payments) {
       const method = (payment.paymentMethod || '').toLowerCase();
       const amount = Number(payment.amount);
-      if (CASH_METHODS.includes(method)) totalCash += amount;
-      else if (CARD_METHODS.includes(method)) totalCard += amount;
-      else totalOther += amount;
+      const tip = Number(payment.tip || 0);
+      if (CASH_METHODS.includes(method)) { salesCash += amount; tipCash += tip; }
+      else if (CARD_METHODS.includes(method)) { salesCard += amount; tipCard += tip; }
+      else if (TRANSFER_METHODS.includes(method)) { salesTransfer += amount; tipTransfer += tip; }
+      else { salesOther += amount; tipOther += tip; }
     }
+
+    // Esperado por método = ventas + propina de ese método.
+    const totalCash = salesCash + tipCash;
+    const totalCard = salesCard + tipCard;
+    const totalTransfer = salesTransfer + tipTransfer;
+    const totalOther = salesOther + tipOther;
+    const totalTips = tipCash + tipCard + tipTransfer + tipOther;
+    const totalSales = salesCash + salesCard + salesTransfer + salesOther;
+
+    // Efectivo entregado a motoristas (sale de caja) en envíos pagados del período.
+    const accountsRepo = this.paymentsRepository.manager.getRepository('Account');
+    const courierQb = accountsRepo
+      .createQueryBuilder('a')
+      .select('COALESCE(SUM(a.courier_fee), 0)', 'sum')
+      .where('a.is_delivery = true')
+      .andWhere("a.status = 'paid'");
+    if (since) courierQb.andWhere('a.closed_at > :since', { since });
+    const courierRow = await courierQb.getRawOne<{ sum: string }>();
+    const courierCash = round2(Number(courierRow?.sum || 0));
 
     return {
       since,
-      totalSales: round2(totalCash + totalCard + totalOther),
+      totalSales: round2(totalSales),
       totalCash: round2(totalCash),
       totalCard: round2(totalCard),
+      totalTransfer: round2(totalTransfer),
       totalOther: round2(totalOther),
+      totalTips: round2(totalTips),
+      courierCash,
+      // Efectivo que debería haber en caja = efectivo cobrado - salidas a motoristas.
+      expectedCash: round2(totalCash - courierCash),
       paymentsCount: payments.length,
     };
   }
@@ -73,9 +112,10 @@ export class CashService {
   ): Promise<CashClosing> {
     const summary = await this.currentSummary();
 
+    // La diferencia se mide contra el efectivo ESPERADO (cobrado - motoristas).
     const difference =
       dto.countedCash != null
-        ? round2(dto.countedCash - summary.totalCash)
+        ? round2(dto.countedCash - summary.expectedCash)
         : 0;
 
     const closing = this.closingsRepository.create({
@@ -83,7 +123,13 @@ export class CashService {
       totalSales: summary.totalSales,
       totalCash: summary.totalCash,
       totalCard: summary.totalCard,
+      totalTransfer: summary.totalTransfer,
+      totalTips: summary.totalTips,
+      courierCash: summary.courierCash,
       difference,
+      countedCash: dto.countedCash ?? null,
+      countedCard: dto.countedCard ?? null,
+      countedTransfer: dto.countedTransfer ?? null,
       notes: dto.notes ?? null,
     });
     return this.closingsRepository.save(closing);

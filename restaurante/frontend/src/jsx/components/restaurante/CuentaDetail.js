@@ -1,13 +1,14 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Row, Col, Button, Form, Badge, Modal, Table, Spinner, Nav } from 'react-bootstrap';
+import { Card, Row, Col, Button, Form, Badge, Modal, Table, Spinner } from 'react-bootstrap';
 import swal from 'sweetalert';
 import {
 	AccountsApi, OrdersApi, MenuApi, TablesApi, PaymentsApi,
 } from '../../../services/RestaurantApi';
 import {
-	money, ORDER_STATUS, getCurrentUser, ROLES, AUDIT_ACTIONS, ROLE_LABELS,
+	money, ORDER_STATUS, getCurrentUser, ROLES, AUDIT_ACTIONS, ROLE_LABELS, PAYMENT_METHODS, paymentLabel,
 } from '../../../services/helpers';
+import MenuPicker from './MenuPicker';
 
 const CuentaDetail = () => {
 	const { id } = useParams();
@@ -21,7 +22,6 @@ const CuentaDetail = () => {
 	const [orders, setOrders] = useState([]);
 	const [menu, setMenu] = useState([]);
 	const [categories, setCategories] = useState([]);
-	const [activeCat, setActiveCat] = useState('all');
 	const [cart, setCart] = useState([]); // { lineId, menuItem, quantity, notes, choices, chosenItemIds }
 	const [orderNotes, setOrderNotes] = useState('');
 
@@ -38,6 +38,21 @@ const CuentaDetail = () => {
 	const [payAmount, setPayAmount] = useState('');
 	const [payMethod, setPayMethod] = useState('cash');
 	const [paid, setPaid] = useState(0);
+
+	// cobro por producto (división de cuenta)
+	const [showPayItems, setShowPayItems] = useState(false);
+	const [payItemSel, setPayItemSel] = useState([]); // ids de order_items
+	const [payItemsMethod, setPayItemsMethod] = useState('cash');
+
+	// propina (al cobrar por monto)
+	const [tipEnabled, setTipEnabled] = useState(false);
+	const [tipAmount, setTipAmount] = useState('');
+
+	// descuento
+	const [showDiscount, setShowDiscount] = useState(false);
+	const [discountAmount, setDiscountAmount] = useState('');
+	const [discountReason, setDiscountReason] = useState('');
+
 
 	// unir mesas
 	const [showJoin, setShowJoin] = useState(false);
@@ -69,19 +84,37 @@ const CuentaDetail = () => {
 
 	// Opciones a elegir del platillo (productos: aderezos, etc.).
 	const choiceGroups = (item) => item.choiceGroups || [];
-	// Nombre de un producto por id (para mostrar los elegidos).
-	const productName = (id) => (menu || []).find((x) => x.id === id)?.name || `#${id}`;
+	// Producto (para nombre/foto) por id.
+	const optProduct = (id) => (menu || []).find((x) => x.id === id);
+	const productName = (id) => optProduct(id)?.name || `#${id}`;
+	const choose = (g) => Math.max(1, Number(g.choose) || 1);
+
+	// configChoices: { [label]: { [itemId]: cantidad } }
+	const groupTotal = (label) =>
+		Object.values(configChoices[label] || {}).reduce((a, b) => a + b, 0);
+	const incChoice = (label, itemId) =>
+		setConfigChoices((c) => ({
+			...c,
+			[label]: { ...(c[label] || {}), [itemId]: ((c[label] || {})[itemId] || 0) + 1 },
+		}));
+	const decChoice = (label, itemId) =>
+		setConfigChoices((c) => {
+			const g = { ...(c[label] || {}) };
+			const n = (g[itemId] || 0) - 1;
+			if (n <= 0) delete g[itemId];
+			else g[itemId] = n;
+			return { ...c, [label]: g };
+		});
+	// Listo cuando cada grupo tiene elegidos exactamente los que pide.
+	const configReady = configItem
+		? choiceGroups(configItem).every((g) => groupTotal(g.label) === choose(g))
+		: false;
 
 	const addToCart = (item) => {
-		// Si el platillo tiene opciones a elegir, primero se pregunta (modal).
+		// Si el platillo tiene opciones a elegir, primero se pregunta (modal en cuadrícula).
 		if (choiceGroups(item).length > 0) {
 			setConfigItem(item);
-			// configChoices: { [label]: [itemId1, itemId2, ...] } según cuántos se eligen.
-			setConfigChoices(
-				Object.fromEntries(
-					choiceGroups(item).map((g) => [g.label, Array(Math.max(1, g.choose)).fill(g.optionItemIds[0])]),
-				),
-			);
+			setConfigChoices(Object.fromEntries(choiceGroups(item).map((g) => [g.label, {}])));
 			setShowConfig(true);
 			return;
 		}
@@ -98,13 +131,18 @@ const CuentaDetail = () => {
 	// Confirma los productos elegidos y agrega el platillo como línea propia.
 	const confirmConfig = () => {
 		const item = configItem;
-		// choices: ["Aderezo: Ranch, BBQ"]; chosenItemIds: [id, id]
-		const choices = Object.entries(configChoices).map(([label, ids]) =>
-			`${label}: ${(Array.isArray(ids) ? ids : [ids]).map((id) => productName(Number(id))).join(', ')}`,
-		);
-		const chosenItemIds = Object.values(configChoices)
-			.flatMap((ids) => (Array.isArray(ids) ? ids : [ids]))
-			.map((id) => Number(id));
+		const choices = choiceGroups(item).map((g) => {
+			const counts = configChoices[g.label] || {};
+			const parts = Object.entries(counts).map(([id, n]) => `${productName(Number(id))}${n > 1 ? ` x${n}` : ''}`);
+			return `${g.label}: ${parts.join(', ')}`;
+		});
+		const chosenItemIds = [];
+		for (const g of choiceGroups(item)) {
+			const counts = configChoices[g.label] || {};
+			for (const [id, n] of Object.entries(counts)) {
+				for (let k = 0; k < n; k++) chosenItemIds.push(Number(id));
+			}
+		}
 		setCart((prev) => [
 			...prev,
 			{ lineId: `${item.id}-${Date.now()}`, menuItem: item, quantity: 1, notes: '', choices, chosenItemIds },
@@ -113,16 +151,13 @@ const CuentaDetail = () => {
 		setConfigItem(null);
 	};
 
-	const setQty = (lineId, qty) => {
+	// Quita un producto del carrito (uno a uno) desde el menú táctil.
+	const removeOne = (lineId) => {
 		setCart((prev) =>
 			prev
-				.map((x) => (x.lineId === lineId ? { ...x, quantity: Math.max(0, qty) } : x))
+				.map((x) => (x.lineId === lineId ? { ...x, quantity: x.quantity - 1 } : x))
 				.filter((x) => x.quantity > 0),
 		);
-	};
-
-	const setNote = (lineId, notes) => {
-		setCart((prev) => prev.map((x) => (x.lineId === lineId ? { ...x, notes } : x)));
 	};
 
 	const cartTotal = cart.reduce((s, x) => s + Number(x.menuItem.price) * x.quantity, 0);
@@ -169,11 +204,20 @@ const CuentaDetail = () => {
 	};
 
 	const openPay = () => {
-		const remaining = Math.max(Number(account.total) - paid, 0);
-		setPayAmount(remaining ? remaining.toFixed(2) : '');
+		const net = Number(account.total) - Number(account.discount || 0) + (account.isDelivery ? Number(account.courierFee || 0) : 0);
+		const rem = Math.max(net - paid, 0);
+		setPayAmount(rem ? rem.toFixed(2) : '');
 		setPayMethod('cash');
+		setTipEnabled(false);
+		setTipAmount('');
 		setShowPay(true);
 	};
+
+	// Recordatorio para cuadrar caja: en envíos sale efectivo para el motorista.
+	const courierNote = () =>
+		account.isDelivery && Number(account.courierFee) > 0
+			? ` Envío: entregue ${money(account.courierFee)} en efectivo de caja al motorista.`
+			: '';
 
 	const submitPay = async () => {
 		const amount = Number(payAmount);
@@ -181,12 +225,13 @@ const CuentaDetail = () => {
 			swal('Atención', 'Ingrese un monto válido.', 'warning');
 			return;
 		}
+		const tip = tipEnabled ? Number(tipAmount) || 0 : 0;
 		try {
-			const res = await PaymentsApi.pay({ accountId: Number(id), amount, paymentMethod: payMethod });
+			const res = await PaymentsApi.pay({ accountId: Number(id), amount, paymentMethod: payMethod, tip });
 			setShowPay(false);
 			if (res.accountStatus === 'paid') {
-				swal('Cuenta pagada', 'La cuenta fue liquidada y las mesas liberadas.', 'success').then(() =>
-					navigate('/mesas'),
+				swal('Cuenta pagada', `La cuenta fue liquidada.${courierNote()}`, 'success').then(() =>
+					navigate(backTo),
 				);
 			} else {
 				await load();
@@ -196,6 +241,67 @@ const CuentaDetail = () => {
 			swal('Error', e?.response?.data?.message || 'No se pudo registrar el pago', 'error');
 		}
 	};
+
+	// --- Cobro por producto ---
+	// Renglones no pagados (y no anulados) de todas las comandas de la cuenta.
+	const unpaidItems = orders
+		.filter((o) => o.status !== 'cancelled')
+		.flatMap((o) => (o.items || []).map((it) => ({ ...it, orderId: o.id })));
+	const pendingItems = unpaidItems.filter((it) => !it.paid);
+
+	const openPayItems = () => {
+		setPayItemSel([]);
+		setPayItemsMethod('cash');
+		setShowPayItems(true);
+	};
+	const togglePayItem = (itemId) =>
+		setPayItemSel((prev) => (prev.includes(itemId) ? prev.filter((x) => x !== itemId) : [...prev, itemId]));
+	const payItemsTotal = pendingItems
+		.filter((it) => payItemSel.includes(it.id))
+		.reduce((s, it) => s + Number(it.subtotal), 0);
+
+	const submitPayItems = async () => {
+		if (payItemSel.length === 0) {
+			swal('Atención', 'Seleccione al menos un producto.', 'warning');
+			return;
+		}
+		try {
+			const res = await PaymentsApi.payItems(Number(id), payItemSel, payItemsMethod);
+			setShowPayItems(false);
+			if (res.accountStatus === 'paid') {
+				swal('Cuenta pagada', `La cuenta fue liquidada.${courierNote()}`, 'success').then(() =>
+					navigate(backTo),
+				);
+			} else {
+				await load();
+				swal('Cobro registrado', `Saldo pendiente: ${money(res.remaining)}`, 'info');
+			}
+		} catch (e) {
+			swal('Error', e?.response?.data?.message || 'No se pudo registrar el cobro', 'error');
+		}
+	};
+
+	// --- Descuento ---
+	const openDiscount = () => {
+		setDiscountAmount(account.discount ? Number(account.discount).toFixed(2) : '');
+		setDiscountReason(account.discountReason || '');
+		setShowDiscount(true);
+	};
+	const submitDiscount = async () => {
+		const amount = Number(discountAmount) || 0;
+		if (amount > 0 && !discountReason.trim()) {
+			swal('Atención', 'El descuento requiere una descripción.', 'warning');
+			return;
+		}
+		try {
+			await AccountsApi.setDiscount(Number(id), amount, discountReason.trim());
+			setShowDiscount(false);
+			await load();
+		} catch (e) {
+			swal('Error', e?.response?.data?.message || 'No se pudo aplicar el descuento', 'error');
+		}
+	};
+
 
 	const cancelOrder = (o) => {
 		swal({
@@ -236,7 +342,7 @@ const CuentaDetail = () => {
 	const voidPayment = (p) => {
 		swal({
 			title: '¿Anular cobro?',
-			text: `${money(p.amount)} (${p.paymentMethod === 'cash' ? 'efectivo' : p.paymentMethod === 'card' ? 'tarjeta' : p.paymentMethod}). Quedará registrado en la bitácora.`,
+			text: `${money(p.amount)} (${paymentLabel(p.paymentMethod)}). Quedará registrado en la bitácora.`,
 			icon: 'warning',
 			buttons: ['Cancelar', 'Anular cobro'],
 			dangerMode: true,
@@ -296,44 +402,55 @@ const CuentaDetail = () => {
 		return <div className="text-center p-5"><Spinner animation="border" variant="primary" /></div>;
 	}
 
-	const remaining = Math.max(Number(account.total) - paid, 0);
+	const discount = Number(account.discount || 0);
+	const courierCharge = account.isDelivery ? Number(account.courierFee || 0) : 0;
+	const net = Number(account.total) - discount + courierCharge;
+	const remaining = Math.max(net - paid, 0);
 	const closed = account.status === 'paid' || account.status === 'cancelled';
 	// "Para llevar" es una orden, no una mesa: no aplica unir mesas.
 	const isTakeout = (account.tables || []).some((t) => t.isTakeout || t.number === 0);
-	const backTo = isTakeout ? '/para-llevar' : '/mesas';
+	const isDelivery = !!account.isDelivery;
+	const areaLabel = isDelivery ? 'A domicilio' : isTakeout ? 'Para llevar' : 'Mesas';
+	const backTo = isDelivery ? '/a-domicilio' : isTakeout ? '/para-llevar' : '/mesas';
 	// No se puede cobrar una cuenta en Q0 (no se ha ordenado nada).
-	const nothingToCharge = Number(account.total) <= 0;
-	const filteredMenu = activeCat === 'all'
-		? menu
-		: menu.filter((m) => m.categoryId === Number(activeCat));
-
-	// Nombres de productos para desglosar los componentes de un combo.
-	const nameById = Object.fromEntries((menu || []).map((x) => [x.id, x.name]));
-	const comboText = (item) =>
-		(item.combo?.components || [])
-			.map((c) => `${c.quantity > 1 ? `${c.quantity}x ` : ''}${nameById[c.itemId] || 'producto'}`)
-			.join(', ');
+	const nothingToCharge = net <= 0;
 
 	return (
 		<>
 			<div className="d-flex justify-content-between align-items-center flex-wrap mb-3">
 				<div>
 					<Button variant="light" size="sm" className="mb-2" onClick={() => navigate(backTo)}>
-						<i className="bi bi-arrow-left me-1"></i>{isTakeout ? 'Para llevar' : 'Mesas'}
+						<i className="bi bi-arrow-left me-1"></i>{areaLabel}
 					</Button>
 					<h3 className="mb-0">{account.label}</h3>
 					<span className="text-muted">
 						{isTakeout
-							? 'Para llevar'
-							: `Mesa(s): ${(account.tables || []).map((t) => t.number).join(', ')}`}{' '}
+							? areaLabel
+							: `Mesa(s): ${(account.tables || []).map((t) => t.name || t.number).join(', ')}`}{' '}
 						·{' '}
 						<Badge bg={account.status === 'billing' ? 'danger' : account.status === 'paid' ? 'success' : 'warning'}>
 							{account.status === 'billing' ? 'Cobrando' : account.status === 'paid' ? 'Pagada' : account.status === 'cancelled' ? 'Anulada' : 'Abierta'}
 						</Badge>
+						{account.isDelivery && (
+							<Badge bg="secondary" className="ms-2"><i className="fa-solid fa-motorcycle me-1"></i>Envío</Badge>
+						)}
 					</span>
+					{account.isDelivery && Number(account.courierFee) > 0 && (
+						<div className="alert alert-warning py-1 px-2 mt-2 mb-0 small">
+							<i className="fa-solid fa-triangle-exclamation me-1"></i>
+							Envío: se cobran <strong>{money(account.courierFee)}</strong> al cliente (ya incluidos en el total) y salen en efectivo de caja para el motorista.
+						</div>
+					)}
 				</div>
 				<div className="text-end">
-					<h2 className="mb-0 text-primary">{money(account.total)}</h2>
+					<h2 className="mb-0 text-primary">{money(net)}</h2>
+					{(discount > 0 || courierCharge > 0) && (
+						<small className="d-block text-muted">
+							Productos {money(account.total)}
+							{courierCharge > 0 && <> · Envío +{money(courierCharge)}</>}
+							{discount > 0 && <> · Descuento -{money(discount)}</>}
+						</small>
+					)}
 					{paid > 0 && <small className="text-muted">Pagado {money(paid)} · Saldo {money(remaining)}</small>}
 				</div>
 			</div>
@@ -364,7 +481,24 @@ const CuentaDetail = () => {
 							disabled={nothingToCharge}
 							title={nothingToCharge ? 'La cuenta está en Q0' : undefined}
 						>
-							<i className="bi bi-cash-stack me-1"></i>Cobrar
+							<i className="bi bi-cash-stack me-1"></i>Cobrar total / abono
+						</Button>
+					)}
+					{canPay && pendingItems.length > 0 && (
+						<Button
+							variant="outline-success"
+							size="sm"
+							onClick={openPayItems}
+							disabled={nothingToCharge}
+							title={nothingToCharge ? 'La cuenta está en Q0' : undefined}
+						>
+							<i className="fa-solid fa-list-check me-1"></i>Cobrar productos
+						</Button>
+					)}
+
+					{(canOrder || canPay) && (
+						<Button variant="outline-secondary" size="sm" onClick={openDiscount}>
+							<i className="fa-solid fa-tag me-1"></i>Descuento
 						</Button>
 					)}
 
@@ -378,7 +512,7 @@ const CuentaDetail = () => {
 
 			<Row>
 				{/* Comandas existentes */}
-				<Col lg={canOrder && !closed ? 7 : 12}>
+				<Col lg={12}>
 					<Card>
 						<Card.Header><Card.Title>Comandas</Card.Title></Card.Header>
 						<Card.Body>
@@ -403,7 +537,8 @@ const CuentaDetail = () => {
 															<td style={{ width: 50 }}>{it.quantity}×</td>
 															<td>
 																{it.menuItem?.name}
-																{it.notes && <span className="text-muted small d-block">{it.notes}</span>}
+																{it.paid && <span className="badge bg-success ms-2">Pagado</span>}
+																{it.notes && <span className="d-block fw-bold text-dark">{it.notes}</span>}
 															</td>
 															<td className="text-end">{money(it.subtotal)}</td>
 																{canEditOrder && (<td className="text-end" style={{ width: 36 }}><Button size="sm" variant="light" className="text-danger py-0 px-1" title="Anular platillo" onClick={() => cancelItem(o, it)}><i className="fa-solid fa-xmark"></i></Button></td>)}
@@ -423,109 +558,36 @@ const CuentaDetail = () => {
 					</Card>
 				</Col>
 
-				{/* Nueva comanda */}
-				{canOrder && !closed && (
-					<Col lg={5}>
-						<Card>
-							<Card.Header><Card.Title>Nueva comanda</Card.Title></Card.Header>
-							<Card.Body>
-								<Nav variant="pills" className="mb-3 flex-wrap gap-1">
-									<Nav.Item>
-										<Nav.Link active={activeCat === 'all'} onClick={() => setActiveCat('all')}>Todos</Nav.Link>
-									</Nav.Item>
-									{categories.map((c) => (
-										<Nav.Item key={c.id}>
-											<Nav.Link active={activeCat === String(c.id)} onClick={() => setActiveCat(String(c.id))}>
-												{c.name}
-											</Nav.Link>
-										</Nav.Item>
-									))}
-								</Nav>
-
-								<div style={{ maxHeight: 220, overflowY: 'auto' }} className="mb-3">
-									{filteredMenu.map((m) => (
-										<div key={m.id} className="d-flex justify-content-between align-items-center border-bottom py-2">
-											<div className="d-flex align-items-center">
-												{m.image ? (
-													<img src={m.image} alt={m.name} style={{ width: 40, height: 40, objectFit: "cover", borderRadius: 8 }} className="me-2" />
-												) : (
-													<div className="d-flex align-items-center justify-content-center bg-light text-muted me-2" style={{ width: 40, height: 40, borderRadius: 8 }}><i className="fa-solid fa-utensils"></i></div>
-												)}
-												<div>
-													<div className="font-w600">
-														{m.name}
-														{m.combo?.components?.length > 0 && (
-															<span className="badge bg-warning text-dark ms-2">Combo</span>
-														)}
-													</div>
-													<small className="text-muted">{money(m.price)}</small>
-													{m.combo?.components?.length > 0 && (
-														<small className="text-muted d-block">Contiene: {comboText(m)}</small>
-													)}
-													{m.choiceGroups?.length > 0 && (
-														<small className="text-primary d-block">
-															<i className="fa-solid fa-hand-pointer me-1"></i>
-															A elegir: {m.choiceGroups.map((g) => (g.choose > 1 ? `${g.choose} ${g.label}` : g.label)).join(', ')}
-														</small>
-													)}
-												</div>
-											</div>
-											<Button size="sm" variant="outline-primary" onClick={() => addToCart(m)}>
-												<i className="fa-solid fa-plus"></i>
-											</Button>
-										</div>
-									))}
-								</div>
-
-								{cart.length > 0 && (
-									<>
-										<hr />
-										{cart.map((x) => (
-											<div key={x.lineId} className="mb-2">
-												<div className="d-flex justify-content-between align-items-center">
-													<span className="text-truncate">{x.menuItem.name}</span>
-													<div className="d-flex align-items-center gap-1">
-														<Button size="sm" variant="light" onClick={() => setQty(x.lineId, x.quantity - 1)}>−</Button>
-														<span className="px-2">{x.quantity}</span>
-														<Button size="sm" variant="light" onClick={() => setQty(x.lineId, x.quantity + 1)}>+</Button>
-													</div>
-												</div>
-												{x.menuItem.combo?.components?.length > 0 && (
-													<div className="small text-muted">Contiene: {comboText(x.menuItem)}</div>
-												)}
-												{(x.choices || []).length > 0 && (
-													<div className="small text-primary">{x.choices.join('; ')}</div>
-												)}
-												<Form.Control
-													size="sm"
-													className="mt-1"
-													placeholder="Ingrese una nota"
-													value={x.notes}
-													onChange={(e) => setNote(x.lineId, e.target.value)}
-												/>
-											</div>
-										))}
-										<Form.Control
-											as="textarea"
-											rows={2}
-											className="mt-2"
-											placeholder="Nota general de la comanda"
-											value={orderNotes}
-											onChange={(e) => setOrderNotes(e.target.value)}
-										/>
-										<div className="d-flex justify-content-between align-items-center mt-3">
-											<strong>Total: {money(cartTotal)}</strong>
-											<Button variant="primary" onClick={sendOrder} disabled={sending}>
-												{sending ? 'Enviando…' : 'Enviar a cocina'}
-											</Button>
-										</div>
-									</>
-								)}
-							</Card.Body>
-						</Card>
-					</Col>
-				)}
 			</Row>
+
+			{canOrder && !closed && (
+				<Card>
+					<Card.Header><Card.Title>Nueva comanda</Card.Title></Card.Header>
+					<Card.Body>
+						<MenuPicker
+							categories={categories}
+							menu={menu}
+							cart={cart}
+							onAdd={addToCart}
+							onRemove={removeOne}
+						/>
+						<Form.Control
+							as="textarea"
+							rows={2}
+							className="mt-3"
+							placeholder="Nota general de la comanda"
+							value={orderNotes}
+							onChange={(e) => setOrderNotes(e.target.value)}
+						/>
+						<div className="d-flex justify-content-between align-items-center mt-3">
+							<strong>Total: {money(cartTotal)}</strong>
+							<Button variant="primary" size="lg" onClick={sendOrder} disabled={sending || cart.length === 0}>
+								{sending ? 'Enviando…' : 'Enviar a cocina'}
+							</Button>
+						</div>
+					</Card.Body>
+				</Card>
+			)}
 
 			{/* Cobros de la cuenta */}
 				{canPay && payments.length > 0 && (
@@ -537,7 +599,7 @@ const CuentaDetail = () => {
 									{payments.map((p) => (
 										<tr key={p.id}>
 											<td>{new Date(p.date).toLocaleString("es-GT")}</td>
-											<td>{p.paymentMethod === "cash" ? "Efectivo" : p.paymentMethod === "card" ? "Tarjeta" : p.paymentMethod}</td>
+											<td>{paymentLabel(p.paymentMethod)}</td>
 											<td className="text-end font-w600">{money(p.amount)}</td>
 											<td className="text-end" style={{ width: 90 }}>
 												<Button size="sm" variant="outline-danger" onClick={() => voidPayment(p)}>Anular</Button>
@@ -575,7 +637,7 @@ const CuentaDetail = () => {
 				<Modal.Header closeButton><Modal.Title>Cobrar cuenta</Modal.Title></Modal.Header>
 				<Modal.Body>
 					<div className="d-flex justify-content-between mb-2">
-						<span>Total de la cuenta</span><strong>{money(account.total)}</strong>
+						<span>Neto a pagar</span><strong>{money(net)}</strong>
 					</div>
 					<div className="d-flex justify-content-between mb-3">
 						<span>Saldo pendiente</span><strong className="text-danger">{money(remaining)}</strong>
@@ -584,13 +646,45 @@ const CuentaDetail = () => {
 						<Form.Label>Monto a pagar</Form.Label>
 						<Form.Control type="number" step="0.01" value={payAmount} onChange={(e) => setPayAmount(e.target.value)} />
 					</Form.Group>
-					<Form.Group>
+					<Form.Group className="mb-3">
 						<Form.Label>Forma de pago</Form.Label>
 						<Form.Select value={payMethod} onChange={(e) => setPayMethod(e.target.value)}>
-							<option value="cash">Efectivo</option>
-							<option value="card">Tarjeta</option>
+							{PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
 						</Form.Select>
 					</Form.Group>
+					<Form.Check
+						type="checkbox"
+						id="tip-enabled"
+						className="mb-2"
+						label="Agregar propina (opcional)"
+						checked={tipEnabled}
+						onChange={(e) => setTipEnabled(e.target.checked)}
+					/>
+					{tipEnabled && (() => {
+						const base = Number(payAmount) || 0;
+						const s10 = Math.round(base * 0.10 * 100) / 100;
+						const s15 = Math.round(base * 0.15 * 100) / 100;
+						const cuadrar = Math.max(Math.ceil(base / 10) * 10 - base, 0);
+						return (
+							<div className="border rounded p-2 mb-2">
+								<div className="d-flex gap-2 flex-wrap mb-2">
+									<Button size="sm" variant="outline-success" onClick={() => setTipAmount(String(s10))}>10% ({money(s10)})</Button>
+									<Button size="sm" variant="outline-success" onClick={() => setTipAmount(String(s15))}>15% ({money(s15)})</Button>
+									{cuadrar > 0 && (
+										<Button size="sm" variant="outline-success" onClick={() => setTipAmount(String(cuadrar))}>Cuadrar (+{money(cuadrar)})</Button>
+									)}
+								</div>
+								<Form.Label className="mb-1">Propina (Q)</Form.Label>
+								<Form.Control type="number" step="0.01" value={tipAmount} onChange={(e) => setTipAmount(e.target.value)} placeholder="0.00" />
+							</div>
+						);
+					})()}
+					{tipEnabled && (
+						<div className="d-flex justify-content-between border-top pt-2">
+							<strong>Total a cobrar (con propina)</strong>
+							<strong className="text-success">{money((Number(payAmount) || 0) + (Number(tipAmount) || 0))}</strong>
+						</div>
+					)}
 				</Modal.Body>
 				<Modal.Footer>
 					<Button variant="light" onClick={() => setShowPay(false)}>Cancelar</Button>
@@ -598,8 +692,46 @@ const CuentaDetail = () => {
 				</Modal.Footer>
 			</Modal>
 
-			{/* Modal: elegir opciones de los extras incluidos */}
-			<Modal show={showConfig} onHide={() => setShowConfig(false)} centered>
+			{/* Modal: cobro por producto (división de cuenta) */}
+			<Modal show={showPayItems} onHide={() => setShowPayItems(false)} centered>
+				<Modal.Header closeButton><Modal.Title>Cobrar productos</Modal.Title></Modal.Header>
+				<Modal.Body>
+					<p className="text-muted">Seleccione los productos que se van a pagar.</p>
+					{pendingItems.length === 0 ? (
+						<p className="text-muted mb-0">No hay productos pendientes de pago.</p>
+					) : (
+						pendingItems.map((it) => (
+							<Form.Check
+								key={it.id}
+								type="checkbox"
+								id={`payitem-${it.id}`}
+								checked={payItemSel.includes(it.id)}
+								onChange={() => togglePayItem(it.id)}
+								label={`${it.quantity}x ${it.menuItem?.name || "producto"}  -  ${money(it.subtotal)}`}
+								className="mb-2"
+							/>
+						))
+					)}
+					<hr />
+					<div className="d-flex justify-content-between mb-2">
+						<strong>Seleccionado</strong>
+						<strong>{money(payItemsTotal)}</strong>
+					</div>
+					<Form.Group>
+						<Form.Label>Forma de pago</Form.Label>
+						<Form.Select value={payItemsMethod} onChange={(e) => setPayItemsMethod(e.target.value)}>
+							{PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+						</Form.Select>
+					</Form.Group>
+				</Modal.Body>
+				<Modal.Footer>
+					<Button variant="light" onClick={() => setShowPayItems(false)}>Cancelar</Button>
+					<Button variant="success" onClick={submitPayItems} disabled={payItemSel.length === 0}>Cobrar {money(payItemsTotal)}</Button>
+				</Modal.Footer>
+			</Modal>
+
+			{/* Modal: elegir opciones (aderezos) en cuadrícula */}
+			<Modal show={showConfig} onHide={() => setShowConfig(false)} centered size="lg">
 				<Modal.Header closeButton>
 					<Modal.Title>{configItem?.name}</Modal.Title>
 				</Modal.Header>
@@ -609,41 +741,83 @@ const CuentaDetail = () => {
 							<p className="text-muted mb-1">Incluye:</p>
 							<ul>
 								{configItem.combo.components.map((cc) => (
-									<li key={`c${cc.itemId}`}>{cc.quantity > 1 ? `${cc.quantity}x ` : ''}{productName(cc.itemId)}</li>
+									<li key={`c${cc.itemId}`}>{cc.quantity > 1 ? `${cc.quantity} ` : ''}{productName(cc.itemId)}</li>
 								))}
 							</ul>
 						</>
 					)}
-					{configItem && choiceGroups(configItem).map((g) => (
-						<Form.Group className="mb-3" key={g.label}>
-							<Form.Label>
-								{g.label}
-								{g.choose > 1 ? ` - elija ${g.choose}` : ' - elija una opción'}
-							</Form.Label>
-							{Array.from({ length: Math.max(1, g.choose) }).map((_, idx) => (
-								<Form.Select
-									key={idx}
-									className={idx > 0 ? 'mt-2' : ''}
-									value={(configChoices[g.label] || [])[idx] ?? g.optionItemIds[0]}
-									onChange={(e) =>
-										setConfigChoices((cc) => {
-											const arr = [...(cc[g.label] || Array(Math.max(1, g.choose)).fill(g.optionItemIds[0]))];
-											arr[idx] = Number(e.target.value);
-											return { ...cc, [g.label]: arr };
-										})
-									}
-								>
-									{g.optionItemIds.map((oid) => (
-										<option key={oid} value={oid}>{productName(oid)}</option>
-									))}
-								</Form.Select>
-							))}
-						</Form.Group>
-					))}
+					{configItem && choiceGroups(configItem).map((g) => {
+						const total = groupTotal(g.label);
+						const full = total >= choose(g);
+						return (
+							<div className="mb-3" key={g.label}>
+								<div className="d-flex justify-content-between align-items-center mb-2">
+									<strong style={{ fontSize: "1.1rem" }}>{g.label}</strong>
+									<span className={`fw-bold ${total === choose(g) ? "text-success" : "text-danger"}`} style={{ fontSize: "1.1rem" }}>
+										Elegidos {total}/{choose(g)}
+									</span>
+								</div>
+								<Row className="g-2">
+									{g.optionItemIds.map((oid) => {
+										const p = optProduct(oid);
+										const count = (configChoices[g.label] || {})[oid] || 0;
+										return (
+											<Col xs={6} md={4} key={oid}>
+												<Card
+													className={`h-100 ${count > 0 ? "border-success border-2" : ""}`}
+													style={{ cursor: full && count === 0 ? "not-allowed" : "pointer", opacity: full && count === 0 ? 0.5 : 1 }}
+													onClick={() => { if (!full) incChoice(g.label, oid); }}
+													title="Toque para elegir"
+												>
+													{p?.image ? (
+														<Card.Img variant="top" src={p.image} style={{ height: 80, objectFit: "cover" }} />
+													) : (
+														<div className="bg-light d-flex align-items-center justify-content-center text-muted" style={{ height: 80 }}><i className="fa-solid fa-mortar-pestle fa-lg"></i></div>
+													)}
+													<Card.Body className="p-2 text-center">
+														<div className="small font-w600">{productName(oid)}</div>
+														{count > 0 && (
+															<div className="d-flex justify-content-center align-items-center gap-2 mt-1">
+																<Button size="sm" variant="light" className="py-0 px-2" onClick={(e) => { e.stopPropagation(); decChoice(g.label, oid); }}>-</Button>
+																<Badge bg="success">{count}</Badge>
+															</div>
+														)}
+													</Card.Body>
+												</Card>
+											</Col>
+										);
+									})}
+								</Row>
+							</div>
+						);
+					})}
 				</Modal.Body>
 				<Modal.Footer>
 					<Button variant="light" onClick={() => setShowConfig(false)}>Cancelar</Button>
-					<Button variant="primary" onClick={confirmConfig}>Agregar</Button>
+					<Button variant="primary" onClick={confirmConfig} disabled={!configReady}>Agregar</Button>
+				</Modal.Footer>
+			</Modal>
+
+			{/* Modal descuento */}
+			<Modal show={showDiscount} onHide={() => setShowDiscount(false)} centered>
+				<Modal.Header closeButton><Modal.Title>Descuento</Modal.Title></Modal.Header>
+				<Modal.Body>
+					<div className="d-flex justify-content-between mb-3">
+						<span>Total de la cuenta</span><strong>{money(account.total)}</strong>
+					</div>
+					<Form.Group className="mb-3">
+						<Form.Label>Monto del descuento (Q)</Form.Label>
+						<Form.Control type="number" step="0.01" min={0} value={discountAmount} onChange={(e) => setDiscountAmount(e.target.value)} placeholder="0.00" />
+					</Form.Group>
+					<Form.Group>
+						<Form.Label>Descripción (obligatoria)</Form.Label>
+						<Form.Control as="textarea" rows={2} value={discountReason} onChange={(e) => setDiscountReason(e.target.value)} placeholder="Ingrese el motivo del descuento" />
+					</Form.Group>
+					<Form.Text className="text-muted">Queda registrado en la bitácora. Use 0 para quitar el descuento.</Form.Text>
+				</Modal.Body>
+				<Modal.Footer>
+					<Button variant="light" onClick={() => setShowDiscount(false)}>Cancelar</Button>
+					<Button variant="primary" onClick={submitDiscount}>Aplicar</Button>
 				</Modal.Footer>
 			</Modal>
 

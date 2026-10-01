@@ -38,6 +38,7 @@ export class ReportsService {
 
     const byMethod: Record<string, { count: number; total: number }> = {};
     let total = 0;
+    let tips = 0;
     for (const payment of payments) {
       const method = payment.paymentMethod || 'otro';
       byMethod[method] = byMethod[method] || { count: 0, total: 0 };
@@ -46,6 +47,7 @@ export class ReportsService {
         byMethod[method].total + Number(payment.amount),
       );
       total = round2(total + Number(payment.amount));
+      tips = round2(tips + Number(payment.tip || 0));
     }
 
     return {
@@ -53,6 +55,7 @@ export class ReportsService {
       to: to ?? null,
       paymentsCount: payments.length,
       total: round2(total),
+      tips,
       byPaymentMethod: byMethod,
     };
   }
@@ -63,16 +66,28 @@ export class ReportsService {
    * desglosan sus componentes ligados (cantidad, ingreso 0), así el ranking
    * refleja el volumen real de cada producto vendido, también dentro de combos.
    */
-  async topItems(from?: string, to?: string, limit = 10) {
+  async topItems(
+    from?: string,
+    to?: string,
+    limit = 10,
+    categoryId?: number,
+    combo: 'all' | 'combos' | 'no' = 'all',
+  ) {
     const r = this.range(from, to);
 
     // 1) Renglones normales (incluye el propio combo como producto vendido).
-    const rows = await this.orderItemsRepository
+    const qb = this.orderItemsRepository
       .createQueryBuilder('item')
       .innerJoin('item.order', 'order')
       .innerJoin('item.menuItem', 'menuItem')
       .where('order.status != :cancelled', { cancelled: 'cancelled' })
-      .andWhere('CAST(order.created_at AS DATE) BETWEEN :from AND :to', r)
+      .andWhere('CAST(order.created_at AS DATE) BETWEEN :from AND :to', r);
+    if (categoryId) {
+      qb.andWhere('menuItem.categoryId = :categoryId', { categoryId });
+    }
+    if (combo === 'combos') qb.andWhere('menuItem.combo IS NOT NULL');
+    if (combo === 'no') qb.andWhere('menuItem.combo IS NULL');
+    const rows = await qb
       .select('menuItem.id', 'menuItemId')
       .addSelect('menuItem.name', 'menuItemName')
       .addSelect('SUM(item.quantity)', 'quantity')
@@ -81,20 +96,26 @@ export class ReportsService {
       .addGroupBy('menuItem.name')
       .getRawMany();
 
-    // 2) Componentes de combos (desglose), con ingreso 0.
-    const componentRows = await this.orderItemsRepository.query(
-      `SELECT (c->>'itemId')::int AS "menuItemId",
-              MAX(c->>'name')      AS "menuItemName",
-              SUM((c->>'quantity')::numeric) AS "quantity"
-         FROM restaurante.order_items oi
-         JOIN restaurante.orders o ON o.id = oi.order_id
-         CROSS JOIN LATERAL jsonb_array_elements(oi.components) AS c
-        WHERE oi.components IS NOT NULL
-          AND o.status <> 'cancelled'
-          AND CAST(o.created_at AS DATE) BETWEEN $1 AND $2
-        GROUP BY (c->>'itemId')::int`,
-      [r.from, r.to],
-    );
+    // 2) Componentes de combos (desglose, ingreso 0). Se omiten si el filtro es
+    // "solo combos" (un componente es un producto individual, no un combo).
+    const componentRows =
+      combo === 'combos'
+        ? []
+        : await this.orderItemsRepository.query(
+            `SELECT (c->>'itemId')::int AS "menuItemId",
+                    MAX(c->>'name')      AS "menuItemName",
+                    SUM((c->>'quantity')::numeric) AS "quantity"
+               FROM restaurante.order_items oi
+               JOIN restaurante.orders o ON o.id = oi.order_id
+               CROSS JOIN LATERAL jsonb_array_elements(oi.components) AS c
+               JOIN restaurante.menu_items mi ON mi.id = (c->>'itemId')::int
+              WHERE oi.components IS NOT NULL
+                AND o.status <> 'cancelled'
+                AND CAST(o.created_at AS DATE) BETWEEN $1 AND $2
+                AND ($3::int IS NULL OR mi.category_id = $3)
+              GROUP BY (c->>'itemId')::int`,
+            [r.from, r.to, categoryId ?? null],
+          );
 
     // 3) Fusionar por producto (suma cantidad; ingreso solo de renglones reales).
     const merged = new Map<

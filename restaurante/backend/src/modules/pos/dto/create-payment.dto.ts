@@ -1,10 +1,4 @@
-import {
-  IsInt,
-  IsNumber,
-  IsPositive,
-  IsString,
-  MaxLength,
-} from 'class-validator';
+import { IsIn, IsInt, IsNumber, IsOptional, IsPositive, Min } from 'class-validator';
 
 /**
  * Registra un pago sobre una cuenta. Cuando la suma de pagos cubre el total
@@ -18,7 +12,14 @@ export class CreatePaymentDto {
   @IsPositive()
   amount: number;
 
-  @IsString()
-  @MaxLength(30)
+  @IsIn(['cash', 'card', 'transfer'], {
+    message: 'El método de pago debe ser cash, card o transfer',
+  })
   paymentMethod: string;
+
+  /** Propina opcional (aparte del monto). */
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0)
+  tip?: number;
 }

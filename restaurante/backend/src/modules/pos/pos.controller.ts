@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { PosService } from './pos.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
+import { PayItemsDto } from './dto/pay-items.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -29,6 +30,13 @@ export class PosController {
   @Roles(Role.ADMINISTRATOR, Role.CASHIER)
   pay(@Body() dto: CreatePaymentDto, @CurrentUser() user: AuthUser) {
     return this.posService.pay(dto, user);
+  }
+
+  /** Cobro por producto (división de cuenta). */
+  @Post('items')
+  @Roles(Role.ADMINISTRATOR, Role.CASHIER)
+  payItems(@Body() dto: PayItemsDto, @CurrentUser() user: AuthUser) {
+    return this.posService.payItems(dto, user);
   }
 
   @Get()

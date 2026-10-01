@@ -13,6 +13,7 @@ import { PosModule } from './modules/pos/pos.module';
 import { CashModule } from './modules/caja/cash.module';
 import { ReportsModule } from './modules/reportes/reports.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { VenuesModule } from './modules/venues/venues.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { SettingsModule } from './modules/settings/settings.module';
     CashModule,
     ReportsModule,
     SettingsModule,
+    VenuesModule,
   ],
   providers: [
     // Idempotencia global: colapsa POST duplicados por doble clic.

@@ -64,4 +64,8 @@ export class OrderItem {
    */
   @Column({ type: 'jsonb', nullable: true })
   components: { itemId: number; name: string; quantity: number }[] | null;
+
+  /** Si el renglón ya fue pagado (cobro por producto / división de cuenta). */
+  @Column({ type: 'boolean', default: false })
+  paid: boolean;
 }

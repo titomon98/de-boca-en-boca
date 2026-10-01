@@ -70,4 +70,36 @@ export class Account {
    */
   @Column({ name: 'delivered_at', type: 'timestamp', nullable: true })
   deliveredAt: Date | null;
+
+  /** Descuento aplicado (a criterio del mesero). Neto a pagar = total - discount. */
+  @Column({
+    type: 'numeric',
+    precision: 12,
+    scale: 2,
+    default: 0,
+    transformer: numericTransformer,
+  })
+  discount: number;
+
+  @Column({ name: 'discount_reason', type: 'varchar', length: 255, nullable: true })
+  discountReason: string | null;
+
+  /** Sede/local al que pertenece la cuenta (infraestructura multi-local). */
+  @Column({ name: 'venue_id', type: 'int', nullable: true })
+  venueId: number | null;
+
+  /** Envío a domicilio. */
+  @Column({ name: 'is_delivery', type: 'boolean', default: false })
+  isDelivery: boolean;
+
+  /** Efectivo que sale de caja para el motorista (para cuadrar la caja). */
+  @Column({
+    name: 'courier_fee',
+    type: 'numeric',
+    precision: 12,
+    scale: 2,
+    default: 0,
+    transformer: numericTransformer,
+  })
+  courierFee: number;
 }

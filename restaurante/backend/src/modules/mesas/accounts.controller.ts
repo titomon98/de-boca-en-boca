@@ -11,6 +11,8 @@ import {
 import { AccountsService } from './accounts.service';
 import { OpenAccountDto } from './dto/open-account.dto';
 import { JoinTablesDto } from './dto/join-tables.dto';
+import { SetDiscountDto } from './dto/set-discount.dto';
+import { SetDeliveryDto } from './dto/set-delivery.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -45,6 +47,13 @@ export class AccountsController {
     return this.accountsService.findTakeout();
   }
 
+  /** Órdenes a domicilio activas. */
+  @Get('delivery')
+  @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
+  findDelivery() {
+    return this.accountsService.findDelivery();
+  }
+
   @Get(':id')
   @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
   findOne(@Param('id', ParseIntPipe) id: number) {
@@ -71,6 +80,28 @@ export class AccountsController {
   @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
   markBilling(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
     return this.accountsService.markBilling(id, user);
+  }
+
+  /** Marca la cuenta como envío a domicilio + efectivo para el motorista. */
+  @Post(':id/delivery')
+  @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
+  setDelivery(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetDeliveryDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.accountsService.setDelivery(id, dto.isDelivery, dto.courierFee ?? 0, user);
+  }
+
+  /** Descuento a criterio del mesero (requiere descripción). */
+  @Post(':id/discount')
+  @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
+  setDiscount(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetDiscountDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.accountsService.setDiscount(id, dto.amount, dto.reason ?? '', user);
   }
 
   /** Entrega de orden para llevar (entregada / pendiente). */

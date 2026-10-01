@@ -77,6 +77,14 @@ export const AUDIT_ACTIONS = {
   orden_pendiente_entrega: 'Orden marcada pendiente de entrega',
 };
 
+/** Métodos de pago disponibles. */
+export const PAYMENT_METHODS = [
+  { value: 'cash', label: 'Efectivo' },
+  { value: 'card', label: 'Tarjeta' },
+  { value: 'transfer', label: 'Transferencia' },
+];
+export const paymentLabel = (k) => PAYMENT_METHODS.find((m) => m.value === k)?.label || k;
+
 /** Metadatos de estado de comanda. */
 export const ORDER_STATUS = {
   pending: { label: 'Pendiente', badge: 'badge-danger' },

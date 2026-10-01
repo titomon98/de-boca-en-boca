@@ -47,7 +47,7 @@ export class ComandasService {
    * Al confirmar, emite 'comanda:nueva' por WebSocket hacia cocina.
    */
   async create(dto: CreateOrderDto, user: AuthUser): Promise<Order> {
-    const orderId = await this.dataSource.transaction(async (manager) => {
+    const orderIds = await this.dataSource.transaction(async (manager) => {
       await lockAccount(manager, dto.accountId);
       const account = await manager.findOne(Account, {
         where: { id: dto.accountId },
@@ -82,16 +82,10 @@ export class ComandasService {
         comps.forEach((c) => componentById.set(c.id, c));
       }
 
-      const order = manager.create(Order, {
-        accountId: account.id,
-        waiterId: user.id,
-        // Las comandas nacen directamente en preparación (ya no hay "pendiente").
-        status: 'in_preparation',
-        notes: dto.notes ?? null,
-      });
-      await manager.save(order);
-
-      let orderTotal = 0;
+      // Cocina y barra se marcan por separado: se parte la comanda en una por
+      // estación (comida -> cocina, bebida -> barra). Cada orden avanza su
+      // propio estado sin afectar a la otra.
+      const groups = new Map<string, typeof dto.items>();
       for (const line of dto.items) {
         const menuItem = menuById.get(line.menuItemId);
         if (!menuItem) {
@@ -104,84 +98,101 @@ export class ComandasService {
             `El platillo "${menuItem.name}" no está disponible`,
           );
         }
-
-        const unitPrice = round2(Number(menuItem.price));
-        const subtotal = round2(unitPrice * line.quantity);
-        orderTotal += subtotal;
-
-        // Componentes del renglón (a Q0, para analítica): los fijos del combo
-        // más los elegidos en grupos de elección (aderezos). Todo x cantidad.
-        const nameOf = (id: number) => componentById.get(id)?.name ?? `#${id}`;
-        const components: { itemId: number; name: string; quantity: number }[] = [];
-
-        for (const c of menuItem.combo?.components ?? []) {
-          components.push({
-            itemId: c.itemId,
-            name: nameOf(c.itemId),
-            quantity: c.quantity * line.quantity,
-          });
-        }
-
-        // Validar los elegidos contra los grupos de elección del platillo.
-        const chosen = line.chosenItemIds ?? [];
-        const groups = menuItem.choiceGroups ?? [];
-        if (groups.length > 0) {
-          const remaining = [...chosen];
-          for (const g of groups) {
-            const picked = remaining.filter((id) => g.optionItemIds.includes(id));
-            if (picked.length !== g.choose) {
-              throw new BadRequestException(
-                `"${menuItem.name}": debe elegir ${g.choose} de "${g.label}"`,
-              );
-            }
-            // quitar los usados por este grupo
-            for (const id of picked) remaining.splice(remaining.indexOf(id), 1);
-          }
-          if (remaining.length > 0) {
-            throw new BadRequestException(
-              `"${menuItem.name}": opción elegida no válida`,
-            );
-          }
-        }
-        // Agregar los elegidos como componentes (agrupando repetidos), x cantidad.
-        const chosenCounts = new Map<number, number>();
-        for (const id of chosen) chosenCounts.set(id, (chosenCounts.get(id) ?? 0) + 1);
-        for (const [id, count] of chosenCounts) {
-          components.push({ itemId: id, name: nameOf(id), quantity: count * line.quantity });
-        }
-
-        const item = manager.create(OrderItem, {
-          orderId: order.id,
-          menuItemId: menuItem.id,
-          quantity: line.quantity,
-          unitPrice,
-          subtotal,
-          notes: line.notes ?? null,
-          components: components.length ? components : null,
-        });
-        await manager.save(item);
+        const station = menuItem.type === 'drink' ? 'drink' : 'food';
+        if (!groups.has(station)) groups.set(station, []);
+        groups.get(station)!.push(line);
       }
 
-      account.total = round2(Number(account.total) + orderTotal);
+      const nameOf = (id: number) => componentById.get(id)?.name ?? `#${id}`;
+      const createdIds: number[] = [];
+      let accountTotal = Number(account.total);
+
+      for (const [, lines] of groups) {
+        const order = manager.create(Order, {
+          accountId: account.id,
+          waiterId: user.id,
+          status: 'in_preparation',
+          notes: dto.notes ?? null,
+        });
+        await manager.save(order);
+        createdIds.push(order.id);
+
+        let orderTotal = 0;
+        for (const line of lines) {
+          const menuItem = menuById.get(line.menuItemId)!;
+          const unitPrice = round2(Number(menuItem.price));
+          const subtotal = round2(unitPrice * line.quantity);
+          orderTotal += subtotal;
+
+          const components: { itemId: number; name: string; quantity: number }[] = [];
+          for (const c of menuItem.combo?.components ?? []) {
+            components.push({
+              itemId: c.itemId,
+              name: nameOf(c.itemId),
+              quantity: c.quantity * line.quantity,
+            });
+          }
+
+          const chosen = line.chosenItemIds ?? [];
+          const choiceGroups = menuItem.choiceGroups ?? [];
+          if (choiceGroups.length > 0) {
+            const remaining = [...chosen];
+            for (const g of choiceGroups) {
+              const picked = remaining.filter((id) => g.optionItemIds.includes(id));
+              if (picked.length !== g.choose) {
+                throw new BadRequestException(
+                  `"${menuItem.name}": debe elegir ${g.choose} de "${g.label}"`,
+                );
+              }
+              for (const id of picked) remaining.splice(remaining.indexOf(id), 1);
+            }
+            if (remaining.length > 0) {
+              throw new BadRequestException(
+                `"${menuItem.name}": opción elegida no válida`,
+              );
+            }
+          }
+          const chosenCounts = new Map<number, number>();
+          for (const id of chosen) chosenCounts.set(id, (chosenCounts.get(id) ?? 0) + 1);
+          for (const [id, count] of chosenCounts) {
+            components.push({ itemId: id, name: nameOf(id), quantity: count * line.quantity });
+          }
+
+          const item = manager.create(OrderItem, {
+            orderId: order.id,
+            menuItemId: menuItem.id,
+            quantity: line.quantity,
+            unitPrice,
+            subtotal,
+            notes: line.notes ?? null,
+            components: components.length ? components : null,
+          });
+          await manager.save(item);
+        }
+
+        accountTotal += orderTotal;
+
+        await this.audit.log(
+          {
+            action: 'comanda_creada',
+            user,
+            accountId: account.id,
+            orderId: order.id,
+            detail: `${lines.length} platillo(s) enviados a ${groups.size > 1 ? 'cocina/barra' : 'cocina'}`,
+          },
+          manager,
+        );
+      }
+
+      account.total = round2(accountTotal);
       await manager.save(account);
 
-      await this.audit.log(
-        {
-          action: 'comanda_creada',
-          user,
-          accountId: account.id,
-          orderId: order.id,
-          detail: `${dto.items.length} platillo(s) enviados a cocina`,
-        },
-        manager,
-      );
-
-      return order.id;
+      return createdIds;
     });
 
-    const order = await this.findOne(orderId);
-    this.gateway.emitNewOrder(order);
-    return order;
+    const orders = await Promise.all(orderIds.map((oid) => this.findOne(oid)));
+    orders.forEach((o) => this.gateway.emitNewOrder(o));
+    return orders[0];
   }
 
   /** Cambia el estado de una comanda, registra al responsable y notifica por WS. */

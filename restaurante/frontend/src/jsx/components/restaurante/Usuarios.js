@@ -137,7 +137,6 @@ const Usuarios = () => {
 							<option value="administrator">Administrador</option>
 							<option value="waiter">Mesero</option>
 							<option value="cashier">Cajero</option>
-							<option value="kitchen">Cocina</option>
 						</Form.Select>
 					</Form.Group>
 				</Modal.Body>

@@ -2,7 +2,6 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Card, Row, Col, Button, Badge, Spinner } from 'react-bootstrap';
 import { OrdersApi, SettingsApi } from '../../../services/RestaurantApi';
 import { connectComandas } from '../../../services/socket';
-import { ORDER_STATUS } from '../../../services/helpers';
 import { printTicket } from '../../../services/printTicket';
 
 const COLUMNS = [
@@ -17,12 +16,20 @@ const timeAgo = (date) => {
 	return `hace ${mins} min`;
 };
 
-const Cocina = () => {
+/**
+ * Tablero de comandas en tiempo real. Se reutiliza para Cocina (comida) y Barra
+ * (bebidas): filtra los renglones de cada comanda por el tipo de producto, y
+ * oculta las comandas que no tengan renglones de ese tipo.
+ */
+const Cocina = ({ type = 'food', title = 'Cocina', subtitle = 'Comandas activas en tiempo real' }) => {
 	const [orders, setOrders] = useState([]);
 	const [loading, setLoading] = useState(true);
 	const [connected, setConnected] = useState(false);
 	const socketRef = useRef(null);
 	const autoPrintRef = useRef(false);
+
+	// Renglones de esta estación (food -> cocina, drink -> barra).
+	const stationItems = (o) => (o.items || []).filter((it) => (it.menuItem?.type || 'food') === type);
 
 	const upsert = (order) => {
 		setOrders((prev) => {
@@ -49,7 +56,7 @@ const Cocina = () => {
 		socket.on('disconnect', () => setConnected(false));
 		socket.on('comanda:nueva', (order) => {
 			upsert(order);
-			if (autoPrintRef.current) printTicket(order);
+			if (autoPrintRef.current) printTicket(order, { type, station: title.toUpperCase() });
 		});
 		socket.on('comanda:actualizada', upsert);
 
@@ -75,8 +82,8 @@ const Cocina = () => {
 		<>
 			<div className="d-flex justify-content-between align-items-center mb-3">
 				<div>
-					<h3 className="mb-0">Cocina</h3>
-					<span className="text-muted">Comandas activas en tiempo real</span>
+					<h3 className="mb-0">{title}</h3>
+					<span className="text-muted">{subtitle}</span>
 				</div>
 				<Badge bg={connected ? 'success' : 'secondary'}>
 					<i className="bi bi-broadcast me-1"></i>{connected ? 'En vivo' : 'Sin conexión'}
@@ -85,7 +92,7 @@ const Cocina = () => {
 
 			<Row className="align-items-start">
 				{COLUMNS.map((col) => {
-					const list = orders.filter((o) => o.status === col.key);
+					const list = orders.filter((o) => o.status === col.key && stationItems(o).length > 0);
 					return (
 						<Col md={6} key={col.key} className="mb-3">
 							<div className="d-flex justify-content-between align-items-center mb-2">
@@ -110,13 +117,13 @@ const Cocina = () => {
 												<strong className="fs-14">Comanda #{o.id}</strong>
 												<small className="text-muted">{timeAgo(o.createdAt)}</small>
 											</div>
-											{o.notes && <p className="small text-muted mb-1">Nota: {o.notes}</p>}
+											{o.notes && <p className="fw-bold text-dark mb-1">Nota: {o.notes}</p>}
 											<ul className="list-unstyled mb-2 fs-14">
-												{o.items.map((it) => (
-													<li key={it.id}>
+												{stationItems(o).map((it) => (
+													<li key={it.id} className="mb-1">
 														<span className="font-w600">{it.quantity}× </span>
 														{it.menuItem?.name}
-														{it.notes && <span className="text-danger small d-block">{it.notes}</span>}
+														{it.notes && <span className="d-block fw-bold text-danger" style={{ fontSize: '1rem' }}>{it.notes}</span>}
 													</li>
 												))}
 											</ul>
@@ -133,7 +140,7 @@ const Cocina = () => {
 													size="sm"
 													variant="light"
 													title="Imprimir comanda"
-													onClick={() => printTicket(o)}
+													onClick={() => printTicket(o, { type, station: title.toUpperCase() })}
 												>
 													<i className="fa-solid fa-print"></i>
 												</Button>

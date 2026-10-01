@@ -38,6 +38,10 @@ ALTER TABLE restaurante.tables ADD COLUMN IF NOT EXISTS is_takeout BOOLEAN NOT N
 INSERT INTO restaurante.tables (number, capacity, status, is_takeout)
 SELECT 0, 0, 'free', true
 WHERE NOT EXISTS (SELECT 1 FROM restaurante.tables WHERE is_takeout);
+-- Croquis: salón al que pertenece la mesa ('pequeno' / 'grande') y nombre para
+-- las mesas con nombre (ej. "Barra", "Pequeña"). Las numeradas usan su número.
+ALTER TABLE restaurante.tables ADD COLUMN IF NOT EXISTS salon VARCHAR(20);
+ALTER TABLE restaurante.tables ADD COLUMN IF NOT EXISTS name VARCHAR(40);
 
 -- Catálogo del menú.
 CREATE TABLE IF NOT EXISTS restaurante.menu_categories (
@@ -90,6 +94,14 @@ CREATE TABLE IF NOT EXISTS restaurante.accounts (
 -- delivered_at: entrega (para llevar). Independiente del cobro: una orden puede
 -- estar entregada sin cobrar, o cobrada sin entregar. NULL = pendiente de entrega.
 ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP;
+-- Descuento a criterio del mesero (con descripción obligatoria). Reduce el neto
+-- a pagar (neto = total - discount). Queda registrado en la bitácora.
+ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS discount NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS discount_reason VARCHAR(255);
+-- Envío a domicilio: courier_fee es el efectivo que sale de CAJA para el motorista.
+-- Sirve para cuadrar la caja (sobre todo si el cliente pagó por transferencia).
+ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS is_delivery BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS courier_fee NUMERIC(12,2) NOT NULL DEFAULT 0;
 
 -- Relación cuenta <-> mesas (soporta unión de mesas y cuentas separadas por mesa).
 CREATE TABLE IF NOT EXISTS restaurante.account_tables (
@@ -130,6 +142,8 @@ CREATE TABLE IF NOT EXISTS restaurante.order_items (
 -- [ { "itemId": 12, "name": "Papas fritas", "quantity": 1 }, ... ].
 -- El renglón del combo conserva el precio de paquete; los componentes van a Q0.
 ALTER TABLE restaurante.order_items ADD COLUMN IF NOT EXISTS components JSONB;
+-- paid: si este renglón ya fue pagado (cobro por producto / división de cuenta).
+ALTER TABLE restaurante.order_items ADD COLUMN IF NOT EXISTS paid BOOLEAN NOT NULL DEFAULT false;
 
 -- Pagos (POS). Una cuenta puede liquidarse con uno o varios pagos.
 CREATE TABLE IF NOT EXISTS restaurante.payments (
@@ -140,6 +154,11 @@ CREATE TABLE IF NOT EXISTS restaurante.payments (
   payment_method VARCHAR(30) NOT NULL,
   date TIMESTAMP NOT NULL DEFAULT now()
 );
+-- item_ids: si el pago fue "por producto", los renglones que cubrió (para poder
+-- revertir el estado pagado al anular el cobro). NULL = abono por monto.
+ALTER TABLE restaurante.payments ADD COLUMN IF NOT EXISTS item_ids JSONB;
+-- tip: propina recibida en este pago. NO reduce el saldo; se contabiliza aparte.
+ALTER TABLE restaurante.payments ADD COLUMN IF NOT EXISTS tip NUMERIC(12,2) NOT NULL DEFAULT 0;
 
 -- Bitácora de auditoría: quién hizo qué sobre cada cuenta/comanda.
 -- Guarda nombre y rol del usuario (denormalizado) para que el log siga siendo
@@ -179,6 +198,13 @@ CREATE TABLE IF NOT EXISTS restaurante.cash_closings (
   difference NUMERIC(12,2) NOT NULL DEFAULT 0,
   notes VARCHAR(255)
 );
+-- Métodos de pago: efectivo (cash), tarjeta (card), transferencia (transfer).
+-- Cierre exacto por transferencia. ALTER idempotente:
+ALTER TABLE restaurante.cash_closings ADD COLUMN IF NOT EXISTS total_transfer NUMERIC(12,2) NOT NULL DEFAULT 0;
+-- Propinas recibidas desde el último cierre (contabilizadas aparte de las ventas).
+ALTER TABLE restaurante.cash_closings ADD COLUMN IF NOT EXISTS total_tips NUMERIC(12,2) NOT NULL DEFAULT 0;
+-- Efectivo entregado a motoristas (sale de caja). Reduce el efectivo esperado.
+ALTER TABLE restaurante.cash_closings ADD COLUMN IF NOT EXISTS courier_cash NUMERIC(12,2) NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_restaurante_accounts_status ON restaurante.accounts(status);
 CREATE INDEX IF NOT EXISTS idx_restaurante_account_tables_table ON restaurante.account_tables(table_id);
@@ -208,3 +234,30 @@ EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 DO $$ BEGIN
   ALTER TABLE restaurante.order_items ADD CONSTRAINT order_items_quantity_positive CHECK (quantity > 0);
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+-- =====================================================
+-- Sedes (venues): infraestructura para operar varios locales.
+-- Por ahora sólo el restaurante; un foodtruck se agrega como otra fila.
+-- Las cuentas se ligan a una sede para poder separar ventas por local.
+-- =====================================================
+CREATE TABLE IF NOT EXISTS restaurante.venues (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(80) NOT NULL,
+  type VARCHAR(20) NOT NULL DEFAULT 'restaurant' CHECK (type IN ('restaurant','foodtruck')),
+  active BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMP NOT NULL DEFAULT now()
+);
+-- Sede inicial (el restaurante). Idempotente.
+INSERT INTO restaurante.venues (name, type)
+SELECT 'Restaurante', 'restaurant'
+WHERE NOT EXISTS (SELECT 1 FROM restaurante.venues);
+
+-- Cada cuenta pertenece a una sede (por defecto, la primera = restaurante).
+ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS venue_id INTEGER REFERENCES restaurante.venues(id);
+UPDATE restaurante.accounts SET venue_id = (SELECT MIN(id) FROM restaurante.venues) WHERE venue_id IS NULL;
+
+-- Conteo físico al cerrar caja (para cuadrar cada método):
+-- efectivo contado, tarjeta (vouchers) y transferencias (comprobantes).
+ALTER TABLE restaurante.cash_closings ADD COLUMN IF NOT EXISTS counted_cash NUMERIC(12,2);
+ALTER TABLE restaurante.cash_closings ADD COLUMN IF NOT EXISTS counted_card NUMERIC(12,2);
+ALTER TABLE restaurante.cash_closings ADD COLUMN IF NOT EXISTS counted_transfer NUMERIC(12,2);

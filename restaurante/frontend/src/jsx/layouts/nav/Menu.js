@@ -3,7 +3,6 @@ import { ROLES } from '../../../services/helpers';
 const A = ROLES.ADMIN;
 const W = ROLES.WAITER;
 const C = ROLES.CASHIER;
-const K = ROLES.KITCHEN;
 
 /**
  * Menú lateral del sistema de restaurante. Cada entrada declara `roles`:
@@ -29,10 +28,22 @@ export const MenuList = [
         roles: [A, W, C],
     },
     {
+        title: 'A domicilio',
+        to: 'a-domicilio',
+        iconStyle: 'fa-solid fa-motorcycle',
+        roles: [A, W, C],
+    },
+    {
         title: 'Cocina',
         to: 'cocina',
         iconStyle: 'bi bi-egg-fried',
-        roles: [A, K],
+        roles: [A, C, W],
+    },
+    {
+        title: 'Barra',
+        to: 'barra',
+        iconStyle: 'bi bi-cup-straw',
+        roles: [A, C, W],
     },
     {
         title: 'Caja',

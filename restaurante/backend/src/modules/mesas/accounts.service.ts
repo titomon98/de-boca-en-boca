@@ -15,6 +15,22 @@ import { recomputeTableStatus } from './table-status.util';
 import { AuditService } from '../audit/audit.service';
 import { AuthUser } from '../../common/decorators/current-user.decorator';
 import { lockAccount } from '../../common/lock-account';
+import { round2 } from '../../common/utils/money';
+import { VenuesService } from '../venues/venues.service';
+
+/** Cada salón es independiente: no se pueden unir mesas de salones distintos. */
+function assertSameSalon(tables: RestaurantTable[]): void {
+  const salones = new Set(
+    tables
+      .filter((t) => !t.isTakeout && t.number !== 0)
+      .map((t) => t.salon),
+  );
+  if (salones.size > 1) {
+    throw new BadRequestException(
+      'No se pueden unir mesas de salones distintos; cada salón es independiente',
+    );
+  }
+}
 
 @Injectable()
 export class AccountsService {
@@ -23,6 +39,7 @@ export class AccountsService {
     private readonly accountsRepository: Repository<Account>,
     private readonly dataSource: DataSource,
     private readonly audit: AuditService,
+    private readonly venues: VenuesService,
   ) {}
 
   /**
@@ -38,6 +55,7 @@ export class AccountsService {
       if (tables.length !== dto.tableIds.length) {
         throw new NotFoundException('Una o más mesas no existen');
       }
+      assertSameSalon(tables);
 
       const account = manager.create(Account, {
         label: dto.label,
@@ -45,6 +63,7 @@ export class AccountsService {
         waiterId: dto.waiterId ?? user.id ?? null,
         total: 0,
         tables,
+        venueId: await this.venues.defaultVenueId(),
       });
       await manager.save(account);
 
@@ -65,6 +84,34 @@ export class AccountsService {
     });
 
     return this.findOne(id);
+  }
+
+  /**
+   * Marca la cuenta como envío a domicilio y registra el efectivo que sale de
+   * caja para el motorista (courierFee). Sirve para cuadrar la caja.
+   */
+  async setDelivery(
+    accountId: number,
+    isDelivery: boolean,
+    courierFee: number,
+    user: AuthUser,
+  ): Promise<Account> {
+    const account = await this.findOne(accountId);
+    if (account.status === 'paid' || account.status === 'cancelled') {
+      throw new BadRequestException('La cuenta ya está cerrada');
+    }
+    account.isDelivery = !!isDelivery;
+    account.courierFee = isDelivery ? round2(Number(courierFee) || 0) : 0;
+    await this.accountsRepository.save(account);
+    await this.audit.log({
+      action: 'envio_marcado',
+      user,
+      accountId,
+      detail: isDelivery
+        ? `Envío a domicilio · efectivo motorista Q${account.courierFee.toFixed(2)}`
+        : 'Envío desmarcado',
+    });
+    return this.findOne(accountId);
   }
 
   /**
@@ -123,6 +170,7 @@ export class AccountsService {
           merged.push(table);
         }
       }
+      assertSameSalon(merged);
       account.tables = merged;
       await manager.save(account);
 
@@ -131,6 +179,76 @@ export class AccountsService {
       }
     });
 
+    return this.findOne(accountId);
+  }
+
+  /**
+   * Aplica un descuento a la cuenta (a criterio del mesero). Requiere descripción
+   * y queda en la bitácora. Reduce el neto a pagar (neto = total - discount).
+   */
+  async setDiscount(
+    accountId: number,
+    amount: number,
+    reason: string,
+    user: AuthUser,
+  ): Promise<Account> {
+    await this.dataSource.transaction(async (manager) => {
+      await lockAccount(manager, accountId);
+      const account = await manager.findOne(Account, {
+        where: { id: accountId },
+        relations: { tables: true },
+      });
+      if (!account) throw new NotFoundException('Cuenta no encontrada');
+      if (account.status === 'paid' || account.status === 'cancelled') {
+        throw new BadRequestException('La cuenta ya está cerrada');
+      }
+      const discount = round2(Number(amount));
+      if (discount < 0) throw new BadRequestException('El descuento no puede ser negativo');
+      if (discount > Number(account.total)) {
+        throw new BadRequestException('El descuento no puede superar el total de la cuenta');
+      }
+      if (discount > 0 && !reason?.trim()) {
+        throw new BadRequestException('El descuento requiere una descripción');
+      }
+
+      account.discount = discount;
+      account.discountReason = discount > 0 ? reason.trim() : null;
+      await manager.save(account);
+
+      await this.audit.log(
+        {
+          action: 'descuento_aplicado',
+          user,
+          accountId: account.id,
+          detail: discount > 0 ? `Q${discount.toFixed(2)} - ${reason.trim()}` : 'Descuento removido',
+        },
+        manager,
+      );
+
+      // Si el descuento cubre el saldo pendiente, cerrar la cuenta.
+      const paidRow = await manager
+        .getRepository(Payment)
+        .createQueryBuilder('p')
+        .select('COALESCE(SUM(p.amount),0)', 'paid')
+        .where('p.accountId = :id', { id: account.id })
+        .getRawOne<{ paid: string }>();
+      const paid = round2(Number(paidRow?.paid || 0));
+      const net = round2(
+        Number(account.total) - discount + (account.isDelivery ? Number(account.courierFee || 0) : 0),
+      );
+      if (net <= paid + 0.001 && account.status !== 'paid') {
+        account.status = 'paid';
+        account.closedAt = new Date();
+        await manager.save(account);
+        for (const table of account.tables) {
+          await recomputeTableStatus(manager, table.id);
+        }
+        await this.audit.log(
+          { action: 'cuenta_pagada', user, accountId: account.id, detail: `Neto Q${net.toFixed(2)}` },
+          manager,
+        );
+      }
+    });
     return this.findOne(accountId);
   }
 
@@ -266,14 +384,24 @@ export class AccountsService {
    * que oculta las pagadas). No incluye anuladas.
    */
   findTakeout(): Promise<Account[]> {
+    return this.takeoutQuery(false).getMany();
+  }
+
+  /** Órdenes a domicilio (misma mesa virtual, marcadas como envío). */
+  findDelivery(): Promise<Account[]> {
+    return this.takeoutQuery(true).getMany();
+  }
+
+  /** Query base de órdenes sobre la mesa is_takeout, filtrando por envío (sí/no). */
+  private takeoutQuery(delivery: boolean) {
     return this.accountsRepository
       .createQueryBuilder('a')
       .innerJoinAndSelect('a.tables', 't')
       .where('t.isTakeout = true')
+      .andWhere('a.isDelivery = :delivery', { delivery })
       .andWhere('a.status != :cancelled', { cancelled: 'cancelled' })
       .andWhere(`NOT (a.status = 'paid' AND a.deliveredAt IS NOT NULL)`)
-      .orderBy('a.openedAt', 'ASC')
-      .getMany();
+      .orderBy('a.openedAt', 'ASC');
   }
 
   /** Cuentas activas (abiertas o en cobro). */

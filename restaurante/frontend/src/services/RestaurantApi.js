@@ -27,10 +27,13 @@ export const AccountsApi = {
   open: (dto) => unwrap(api.post('/accounts', dto)),
   listOpen: () => unwrap(api.get('/accounts')),
   listTakeout: () => unwrap(api.get('/accounts/takeout')),
+  listDelivery: () => unwrap(api.get('/accounts/delivery')),
   get: (id) => unwrap(api.get(`/accounts/${id}`)),
   joinTables: (id, tableIds) => unwrap(api.post(`/accounts/${id}/join-tables`, { tableIds })),
   bill: (id) => unwrap(api.post(`/accounts/${id}/bill`)),
   setDelivered: (id, delivered) => unwrap(api.post(`/accounts/${id}/delivered`, { delivered })),
+  setDiscount: (id, amount, reason) => unwrap(api.post(`/accounts/${id}/discount`, { amount, reason })),
+  setDelivery: (id, isDelivery, courierFee) => unwrap(api.post(`/accounts/${id}/delivery`, { isDelivery, courierFee })),
   cancel: (id) => unwrap(api.post(`/accounts/${id}/cancel`)),
   remove: (id) => unwrap(api.delete(`/accounts/${id}`)),
   logs: (id) => unwrap(api.get(`/accounts/${id}/logs`)),
@@ -49,6 +52,8 @@ export const OrdersApi = {
 // --- POS / Pagos ---
 export const PaymentsApi = {
   pay: (dto) => unwrap(api.post('/payments', dto)),
+  payItems: (accountId, itemIds, paymentMethod) =>
+    unwrap(api.post('/payments/items', { accountId, itemIds, paymentMethod })),
   byAccount: (accountId) => unwrap(api.get('/payments', { params: { accountId } })),
   void: (id) => unwrap(api.post(`/payments/${id}/void`)),
 };
@@ -63,7 +68,8 @@ export const CashApi = {
 // --- Reportes ---
 export const ReportsApi = {
   salesSummary: (from, to) => unwrap(api.get('/reports/sales-summary', { params: { from, to } })),
-  topItems: (from, to, limit) => unwrap(api.get('/reports/top-items', { params: { from, to, limit } })),
+  topItems: (from, to, limit, categoryId, combo) =>
+    unwrap(api.get('/reports/top-items', { params: { from, to, limit, categoryId, combo } })),
   salesByDay: (from, to) => unwrap(api.get('/reports/sales-by-day', { params: { from, to } })),
   inventory: () => unwrap(api.get('/reports/inventory')),
 };
