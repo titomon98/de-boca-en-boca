@@ -22,6 +22,8 @@ import Barra from "./components/restaurante/Barra";
 import MenuAdmin from "./components/restaurante/MenuAdmin";
 import Caja from "./components/restaurante/Caja";
 import CierreCaja from "./components/restaurante/CierreCaja";
+import CuentaHistorial from "./components/restaurante/CuentaHistorial";
+import Cobros from "./components/restaurante/Cobros";
 import Reportes from "./components/restaurante/Reportes";
 import Usuarios from "./components/restaurante/Usuarios";
 import Configuracion from "./components/restaurante/Configuracion";
@@ -47,6 +49,8 @@ const Markup = () => {
     { url: "menu-admin", component: <MenuAdmin /> },
     { url: "caja", component: <Caja /> },
     { url: "cierre-caja", component: <CierreCaja /> },
+    { url: "historial-cuentas", component: <CuentaHistorial /> },
+    { url: "cobros", component: <Cobros /> },
     { url: "reportes", component: <Reportes /> },
     { url: "usuarios", component: <Usuarios /> },
     { url: "configuracion", component: <Configuracion /> },

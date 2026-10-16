@@ -63,8 +63,26 @@ export class MenuItem {
    */
   @Column({ name: 'choice_groups', type: 'jsonb', nullable: true })
   choiceGroups:
-    | { label: string; choose: number; optionItemIds: number[] }[]
+    | {
+        label: string;
+        choose: number;
+        optionItemIds: number[];
+        // Grupo de distribución (ej. sabores de alitas): reparte `total` unidades
+        // entre hasta `maxOptions` opciones elegidas.
+        distribute?: boolean;
+        total?: number;
+        maxOptions?: number;
+        step?: number;
+      }[]
     | null;
+
+  /**
+   * Agrupación visual del menú táctil: productos con el mismo `grupo` se
+   * muestran como una sola tarjeta (ej. "Cervezas", "Gaseosas", "Alitas") y al
+   * tocarla se elige la variante. No afecta precios ni analítica.
+   */
+  @Column({ type: 'varchar', length: 60, nullable: true })
+  grupo: string | null;
 
   /**
    * Foto del platillo en base64 (data URL). `select: false` para no cargarla en
@@ -73,6 +91,6 @@ export class MenuItem {
   @Column({ type: 'text', nullable: true, select: false })
   image: string | null;
 
-  @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }

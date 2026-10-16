@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Card, Row, Col, Table, Button, Form, Spinner } from 'react-bootstrap';
+import { Card, Row, Col, Table, Button, Form, Spinner, Modal } from 'react-bootstrap';
 import swal from 'sweetalert';
 import { CashApi } from '../../../services/RestaurantApi';
-import { money } from '../../../services/helpers';
+import { money, fmtDateTime, getCurrentUser, ROLES } from '../../../services/helpers';
 
 const CierreCaja = () => {
+	const isAdmin = getCurrentUser().role === ROLES.ADMIN;
 	const [loading, setLoading] = useState(true);
 	const [summary, setSummary] = useState(null);
 	const [history, setHistory] = useState([]);
@@ -13,6 +14,34 @@ const CierreCaja = () => {
 	const [countedTransfer, setCountedTransfer] = useState('');
 	const [notes, setNotes] = useState('');
 	const [saving, setSaving] = useState(false);
+	// edición de un cierre
+	const [editC, setEditC] = useState(null);
+	const [ec, setEc] = useState({ countedCash: '', countedCard: '', countedTransfer: '', notes: '' });
+
+	const openEditClosing = (c) => {
+		setEditC(c);
+		setEc({
+			countedCash: c.countedCash != null ? Number(c.countedCash).toFixed(2) : '',
+			countedCard: c.countedCard != null ? Number(c.countedCard).toFixed(2) : '',
+			countedTransfer: c.countedTransfer != null ? Number(c.countedTransfer).toFixed(2) : '',
+			notes: c.notes || '',
+		});
+	};
+	const saveEditClosing = async () => {
+		try {
+			await CashApi.update(editC.id, {
+				countedCash: ec.countedCash !== '' ? Number(ec.countedCash) : undefined,
+				countedCard: ec.countedCard !== '' ? Number(ec.countedCard) : undefined,
+				countedTransfer: ec.countedTransfer !== '' ? Number(ec.countedTransfer) : undefined,
+				notes: ec.notes || undefined,
+			});
+			setEditC(null);
+			await load();
+			swal('Guardado', 'El cierre se actualizó y quedó en la bitácora.', 'success');
+		} catch (e) {
+			swal('Error', e?.response?.data?.message || 'No se pudo editar el cierre', 'error');
+		}
+	};
 
 	const load = useCallback(async () => {
 		const [s, h] = await Promise.all([CashApi.summary(), CashApi.list()]);
@@ -29,6 +58,8 @@ const CierreCaja = () => {
 			text: 'Se registrará un cierre con los totales y el conteo ingresado.',
 			icon: 'info',
 			buttons: ['Cancelar', 'Cerrar caja'],
+			closeOnClickOutside: false,
+			closeOnEsc: false,
 		}).then(async (ok) => {
 			if (!ok) return;
 			setSaving(true);
@@ -180,12 +211,13 @@ const CierreCaja = () => {
 									<th className="text-end">Propinas</th>
 									<th className="text-end">Total</th>
 									<th className="text-end">Dif. efectivo</th>
+									{isAdmin && <th className="text-end">Acciones</th>}
 								</tr>
 							</thead>
 							<tbody>
 								{history.map((c) => (
 									<tr key={c.id}>
-										<td>{new Date(c.date).toLocaleString('es-GT')}</td>
+										<td>{fmtDateTime(c.date)}</td>
 										<td>{c.user?.name || '-'}</td>
 										<td className="text-end">{money(c.totalCash)}</td>
 										<td className="text-end">{money(c.totalCard)}</td>
@@ -193,6 +225,13 @@ const CierreCaja = () => {
 										<td className="text-end">{money(c.totalTips)}</td>
 										<td className="text-end font-w600">{money(c.totalSales)}</td>
 										<td className={`text-end ${Number(c.difference) !== 0 ? 'text-danger' : ''}`}>{money(c.difference)}</td>
+										{isAdmin && (
+											<td className="text-end">
+												<Button size="sm" variant="light" onClick={() => openEditClosing(c)}>
+													<i className="bi bi-pencil"></i>
+												</Button>
+											</td>
+										)}
 									</tr>
 								))}
 							</tbody>
@@ -200,6 +239,20 @@ const CierreCaja = () => {
 					)}
 				</Card.Body>
 			</Card>
+					<Modal show={!!editC} onHide={() => setEditC(null)} centered backdrop="static" keyboard={false}>
+				<Modal.Header closeButton><Modal.Title>Editar cierre</Modal.Title></Modal.Header>
+				<Modal.Body>
+					<p className="text-muted small">Solo se edita el conteo y la nota. Queda registrado en la bitácora.</p>
+					<Form.Group className="mb-2"><Form.Label>Contado efectivo (Q)</Form.Label><Form.Control type="number" step="0.01" min={0} value={ec.countedCash} onChange={(e) => setEc({ ...ec, countedCash: e.target.value })} /></Form.Group>
+					<Form.Group className="mb-2"><Form.Label>Contado tarjeta (Q)</Form.Label><Form.Control type="number" step="0.01" min={0} value={ec.countedCard} onChange={(e) => setEc({ ...ec, countedCard: e.target.value })} /></Form.Group>
+					<Form.Group className="mb-2"><Form.Label>Contado transferencia (Q)</Form.Label><Form.Control type="number" step="0.01" min={0} value={ec.countedTransfer} onChange={(e) => setEc({ ...ec, countedTransfer: e.target.value })} /></Form.Group>
+					<Form.Group><Form.Label>Nota</Form.Label><Form.Control as="textarea" rows={2} value={ec.notes} onChange={(e) => setEc({ ...ec, notes: e.target.value })} /></Form.Group>
+				</Modal.Body>
+				<Modal.Footer>
+					<Button variant="light" onClick={() => setEditC(null)}>Cancelar</Button>
+					<Button variant="primary" onClick={saveEditClosing}>Guardar</Button>
+				</Modal.Footer>
+			</Modal>
 		</>
 	);
 };

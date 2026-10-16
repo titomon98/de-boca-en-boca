@@ -18,6 +18,7 @@ export class UsersService {
   ) {}
 
   async create(dto: CreateUserDto): Promise<User> {
+    dto.email = dto.email.trim().toLowerCase();
     const existing = await this.usersRepository.findOne({
       where: { email: dto.email },
     });
@@ -52,9 +53,28 @@ export class UsersService {
     return this.usersRepository.findOne({ where: { email } });
   }
 
+  /**
+   * Login: acepta el correo completo o solo el usuario (lo que va antes de la @).
+   * Si el usuario coincide con más de un correo, no se adivina: devuelve null.
+   */
+  async findByLogin(login: string): Promise<User | null> {
+    const value = login.trim().toLowerCase();
+    const users = await this.usersRepository
+      .createQueryBuilder('u')
+      .where(
+        value.includes('@')
+          ? 'LOWER(u.email) = :value'
+          : "LOWER(SPLIT_PART(u.email, '@', 1)) = :value",
+        { value },
+      )
+      .getMany();
+    return users.length === 1 ? users[0] : null;
+  }
+
   async update(id: number, dto: UpdateUserDto): Promise<User> {
     const user = await this.findOne(id);
 
+    if (dto.email) dto.email = dto.email.trim().toLowerCase();
     if (dto.email && dto.email !== user.email) {
       const existing = await this.usersRepository.findOne({
         where: { email: dto.email },

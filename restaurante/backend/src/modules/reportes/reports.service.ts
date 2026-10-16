@@ -33,7 +33,7 @@ export class ReportsService {
     const r = this.range(from, to);
     const payments = await this.paymentsRepository
       .createQueryBuilder('payment')
-      .where('CAST(payment.date AS DATE) BETWEEN :from AND :to', r)
+      .where("CAST(payment.date AT TIME ZONE 'America/Guatemala' AS DATE) BETWEEN :from AND :to", r)
       .getMany();
 
     const byMethod: Record<string, { count: number; total: number }> = {};
@@ -81,7 +81,7 @@ export class ReportsService {
       .innerJoin('item.order', 'order')
       .innerJoin('item.menuItem', 'menuItem')
       .where('order.status != :cancelled', { cancelled: 'cancelled' })
-      .andWhere('CAST(order.created_at AS DATE) BETWEEN :from AND :to', r);
+      .andWhere("CAST(order.created_at AT TIME ZONE 'America/Guatemala' AS DATE) BETWEEN :from AND :to", r);
     if (categoryId) {
       qb.andWhere('menuItem.categoryId = :categoryId', { categoryId });
     }
@@ -111,7 +111,7 @@ export class ReportsService {
                JOIN restaurante.menu_items mi ON mi.id = (c->>'itemId')::int
               WHERE oi.components IS NOT NULL
                 AND o.status <> 'cancelled'
-                AND CAST(o.created_at AS DATE) BETWEEN $1 AND $2
+                AND CAST(o.created_at AT TIME ZONE 'America/Guatemala' AS DATE) BETWEEN $1 AND $2
                 AND ($3::int IS NULL OR mi.category_id = $3)
               GROUP BY (c->>'itemId')::int`,
             [r.from, r.to, categoryId ?? null],
@@ -179,13 +179,101 @@ export class ReportsService {
     };
   }
 
+  /**
+   * Ranking POR CATEGORÍA: top productos de cada categoría (incluye el desglose
+   * de componentes de combos). Los sabores (sin categoría, Q0) se agrupan como
+   * "Sabores"; los combos quedan en su categoría "Combos". Así se ve "sabores
+   * más vendidos", "combos más vendidos", "bebidas más vendidas", etc.
+   */
+  async categoryRanking(from?: string, to?: string, perCategory = 8) {
+    const r = this.range(from, to);
+    const rows: Array<{ item_id: number; name: string; category: string; quantity: string; revenue: string }> =
+      await this.orderItemsRepository.query(
+        `WITH base AS (
+            SELECT mi.id AS item_id, mi.name AS name,
+                   COALESCE(mc.name, CASE WHEN mi.price = 0 THEN 'Sabores' ELSE 'Sin categoria' END) AS category,
+                   SUM(oi.quantity) AS quantity, SUM(oi.subtotal) AS revenue
+              FROM restaurante.order_items oi
+              JOIN restaurante.orders o ON o.id = oi.order_id
+              JOIN restaurante.menu_items mi ON mi.id = oi.menu_item_id
+              LEFT JOIN restaurante.menu_categories mc ON mc.id = mi.category_id
+             WHERE o.status <> 'cancelled' AND CAST(o.created_at AT TIME ZONE 'America/Guatemala' AS DATE) BETWEEN $1 AND $2
+             GROUP BY mi.id, mi.name, category
+         ),
+         comps AS (
+            SELECT (c->>'itemId')::int AS item_id, MAX(c->>'name') AS name,
+                   COALESCE(mc.name, 'Sabores') AS category,
+                   SUM((c->>'quantity')::numeric) AS quantity, 0 AS revenue
+              FROM restaurante.order_items oi
+              JOIN restaurante.orders o ON o.id = oi.order_id
+              CROSS JOIN LATERAL jsonb_array_elements(oi.components) AS c
+              JOIN restaurante.menu_items mi ON mi.id = (c->>'itemId')::int
+              LEFT JOIN restaurante.menu_categories mc ON mc.id = mi.category_id
+             WHERE oi.components IS NOT NULL AND o.status <> 'cancelled'
+               AND CAST(o.created_at AT TIME ZONE 'America/Guatemala' AS DATE) BETWEEN $1 AND $2
+             GROUP BY (c->>'itemId')::int, category
+         )
+         SELECT item_id, MAX(name) AS name, category,
+                SUM(quantity) AS quantity, SUM(revenue) AS revenue
+           FROM (SELECT * FROM base UNION ALL SELECT * FROM comps) u
+          GROUP BY item_id, category
+          ORDER BY category, quantity DESC`,
+        [r.from, r.to],
+      );
+
+    const byCat = new Map<string, Array<{ menuItemName: string; quantity: number; revenue: number }>>();
+    for (const row of rows) {
+      const list = byCat.get(row.category) || [];
+      if (list.length < perCategory) {
+        list.push({
+          menuItemName: row.name,
+          quantity: Number(row.quantity),
+          revenue: round2(Number(row.revenue)),
+        });
+      }
+      byCat.set(row.category, list);
+    }
+    return Array.from(byCat.entries())
+      .map(([category, items]) => ({ category, items }))
+      .sort((a, b) => a.category.localeCompare(b.category));
+  }
+
+  /** Ventas por tipo de orden: Mesa / Para llevar / Domicilio. */
+  async salesByType(from?: string, to?: string) {
+    const r = this.range(from, to);
+    const rows: Array<{ type: string; count: string; total: string }> =
+      await this.paymentsRepository.query(
+        `SELECT CASE WHEN a.is_delivery THEN 'Domicilio'
+                     WHEN tt.is_takeout THEN 'Para llevar'
+                     ELSE 'Mesa' END AS type,
+                COUNT(p.id) AS count, COALESCE(SUM(p.amount), 0) AS total
+           FROM restaurante.payments p
+           JOIN restaurante.accounts a ON a.id = p.account_id
+           LEFT JOIN LATERAL (
+             SELECT bool_or(t.is_takeout OR t.number = 0) AS is_takeout
+               FROM restaurante.account_tables act
+               JOIN restaurante.tables t ON t.id = act.table_id
+              WHERE act.account_id = a.id
+           ) tt ON true
+          WHERE CAST(p.date AT TIME ZONE 'America/Guatemala' AS DATE) BETWEEN $1 AND $2
+          GROUP BY type
+          ORDER BY total DESC`,
+        [r.from, r.to],
+      );
+    return rows.map((row) => ({
+      type: row.type,
+      count: Number(row.count),
+      total: round2(Number(row.total)),
+    }));
+  }
+
   /** Cobros agrupados por día en un rango. */
   async salesByDay(from?: string, to?: string) {
     const r = this.range(from, to);
     const rows = await this.paymentsRepository
       .createQueryBuilder('payment')
-      .where('CAST(payment.date AS DATE) BETWEEN :from AND :to', r)
-      .select('CAST(payment.date AS DATE)', 'day')
+      .where("CAST(payment.date AT TIME ZONE 'America/Guatemala' AS DATE) BETWEEN :from AND :to", r)
+      .select("CAST(payment.date AT TIME ZONE 'America/Guatemala' AS DATE)", 'day')
       .addSelect('COUNT(*)', 'count')
       .addSelect('SUM(payment.amount)', 'total')
       .groupBy('day')

@@ -1,0 +1,10 @@
+{
+  "server": "https://debocaenboca.104.236.254.247.sslip.io",
+  "bridgeKey": "LA-MISMA-CLAVE-QUE-PRINT_BRIDGE_KEY-DEL-SERVIDOR",
+  "printers": {
+    "cocina": "win:TERMICA",
+    "barra": "win:TERMICA",
+    "caja": "win:TERMICA",
+    "default": "win:TERMICA"
+  }
+}

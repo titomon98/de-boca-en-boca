@@ -1,98 +1,102 @@
+import swal from 'sweetalert';
+import api from './api';
+import { toDate } from './helpers';
+
 /**
- * Imprime una comanda como ticket de 80mm usando un iframe oculto (no lo bloquea
- * el navegador, a diferencia de window.open). La impresora térmica debe estar
- * configurada como predeterminada en el sistema operativo del equipo.
+ * Impresión de comandas y recibos (80mm) por el puente de impresión.
+ * La tablet arma el texto ESC/POS y lo manda al servidor (POST /orders/print);
+ * el servidor lo reenvía por WebSocket al puente de la computadora del
+ * restaurante, que lo imprime en la impresora de la estación. No se abre el
+ * diálogo de impresión del navegador.
  */
-export function printTicket(order, opts = {}) {
-  const restaurante = opts.restaurante || 'De Boca en Boca';
-  // Estación: si se indica `type` ('food'/'drink'), sólo se imprimen los
-  // renglones de esa estación (comida -> Cocina, bebida -> Barra).
-  const station = opts.station || 'COCINA';
-  const mesas = (order.account?.tables || [])
-    .map((t) => (t.isTakeout || t.number === 0 ? 'Para llevar' : t.name || t.number))
-    .join(', ');
-  const fecha = new Date(order.createdAt || Date.now()).toLocaleString('es-GT');
+const W = 42; // ancho en caracteres de un ticket de 80mm (fuente A)
+const center = (s, w = W) => ' '.repeat(Math.max(0, Math.floor((w - s.length) / 2))) + s;
+const rule = () => '-'.repeat(W);
+// ESC/POS: letra doble (ancho+alto), doble alto y normal.
+const BIG = '\x1D\x21\x11';
+const TALL = '\x1D\x21\x01';
+const NORM = '\x1D\x21\x00';
+// Etiqueta grande de la comanda: A DOMICILIO / PARA LLEVAR (vacío si es mesa).
+// Domicilio también es para llevar (se empaca igual).
+function areaLines(order) {
+  if (order.account?.isDelivery) return ['A DOMICILIO', 'PARA LLEVAR'];
+  const takeout = (order.account?.tables || []).some((t) => t.isTakeout || t.number === 0);
+  return takeout ? ['PARA LLEVAR'] : [];
+}
+const money2 = (n) => `Q${Number(n || 0).toFixed(2)}`;
+const lineLR = (label, right) => {
+  const sp = Math.max(1, W - label.length - String(right).length);
+  return label + ' '.repeat(sp) + String(right);
+};
+const priceRow = (label, value) => lineLR(label, money2(value));
 
-  const items = (order.items || []).filter(
-    (it) => !opts.type || (it.menuItem?.type || 'food') === opts.type,
-  );
-  // Nada para esta estación: no se imprime.
-  if (items.length === 0) return;
-
-  const rows = items
-    .map(
-      (it) => `
-      <tr>
-        <td class="q">${it.quantity}x</td>
-        <td class="n">${escapeHtml(it.menuItem?.name || '')}${
-          it.notes ? `<div class="note">${escapeHtml(it.notes)}</div>` : ''
-        }</td>
-      </tr>`,
-    )
-    .join('');
-
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Comanda #${order.id}</title>
-  <style>
-    @page { size: 80mm auto; margin: 0; }
-    * { box-sizing: border-box; }
-    body { width: 80mm; margin: 0; padding: 6px 8px; font-family: 'Courier New', monospace; color: #000; }
-    h1 { font-size: 15px; text-align: center; margin: 0 0 2px; }
-    .sub { text-align: center; font-size: 11px; margin-bottom: 6px; }
-    .meta { font-size: 12px; margin-bottom: 6px; }
-    hr { border: none; border-top: 1px dashed #000; margin: 6px 0; }
-    table { width: 100%; border-collapse: collapse; }
-    td { font-size: 13px; vertical-align: top; padding: 2px 0; }
-    td.q { width: 34px; font-weight: bold; }
-    .note { font-size: 11px; padding-left: 4px; }
-    .foot { text-align: center; font-size: 11px; margin-top: 8px; }
-  </style></head><body>
-    <h1>${escapeHtml(restaurante)}</h1>
-    <div class="sub">COMANDA #${order.id}</div>
-    <div class="meta">
-      Mesa(s): ${mesas || '-'}<br/>
-      Mesero: ${escapeHtml(order.waiter?.name || '-')}<br/>
-      ${fecha}
-    </div>
-    <hr/>
-    <table>${rows}</table>
-    <hr/>
-    ${order.notes ? `<div class="meta">Nota: ${escapeHtml(order.notes)}</div>` : ''}
-    <div class="foot">*** ${escapeHtml(station)} ***</div>
-  </body></html>`;
-
-  const iframe = document.createElement('iframe');
-  iframe.style.position = 'fixed';
-  iframe.style.right = '0';
-  iframe.style.bottom = '0';
-  iframe.style.width = '0';
-  iframe.style.height = '0';
-  iframe.style.border = '0';
-  document.body.appendChild(iframe);
-
-  const doc = iframe.contentWindow.document;
-  doc.open();
-  doc.write(html);
-  doc.close();
-
-  const done = () => {
-    try {
-      iframe.contentWindow.focus();
-      iframe.contentWindow.print();
-    } catch (e) {
-      /* noop */
-    }
-    setTimeout(() => document.body.removeChild(iframe), 1000);
-  };
-
-  if (iframe.contentWindow.document.readyState === 'complete') {
-    setTimeout(done, 150);
-  } else {
-    iframe.onload = () => setTimeout(done, 150);
+/** Envía el ticket al puente por el servidor. Avisa si no se pudo. */
+async function send(station, text) {
+  try {
+    await api.post('/orders/print', { station, text });
+  } catch (e) {
+    swal('No se imprimió', e?.response?.data?.message || 'No se pudo contactar el servidor.', 'error');
   }
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-  }[c]));
+function receiptText(data) {
+  const fecha = data.fecha || new Date().toLocaleString('es-GT', { timeZone: 'America/Guatemala' });
+  let t = center(data.restaurante || 'De Boca en Boca') + '\n';
+  if (data.orderId) t += center('Recibo orden No. ' + data.orderId) + '\n';
+  if (data.label) t += center(data.label) + '\n';
+  t += center(fecha) + '\n' + rule() + '\n';
+  for (const it of data.lines || []) t += priceRow(`${it.quantity}x ${it.name}`, it.subtotal) + '\n';
+  t += rule() + '\n';
+  t += priceRow('Productos', data.productTotal) + '\n';
+  if (Number(data.discount) > 0) t += lineLR('Descuento', '-' + money2(data.discount)) + '\n';
+  if (data.isDelivery) t += priceRow('Envio motorista', data.courierFee) + '\n';
+  t += TALL + priceRow('TOTAL', data.total) + NORM + '\n';
+  if (data.isDelivery) t += '\n' + center('El envio se paga en efectivo') + '\n';
+  t += '\n' + center('Gracias por su compra') + '\n' + rule() + '\n';
+  return t;
+}
+
+// Mismo formato que las comandas automáticas del puente (print-bridge/server.js).
+function comandaText(order, items, station) {
+  const mesas = (order.account?.tables || [])
+    .map((t) => (t.isTakeout || t.number === 0 ? 'Para llevar' : t.name || t.number))
+    .join(', ') || '-';
+  const fecha = toDate(order.createdAt || Date.now()).toLocaleString('es-GT', { timeZone: 'America/Guatemala' });
+  let t = center('De Boca en Boca') + '\n';
+  t += BIG + center('COMANDA #' + order.id, W / 2) + NORM + '\n';
+  for (const a of areaLines(order)) t += BIG + center(a, W / 2) + NORM + '\n';
+  t += '\n' + BIG + 'Mesa: ' + mesas + NORM + '\n';
+  t += TALL + 'Mesero: ' + (order.waiter?.name || '-') + '\n' + fecha + NORM + '\n' + rule() + '\n';
+  for (const it of items) {
+    t += `${BIG}${it.quantity}x ${it.menuItem?.name || ''}${NORM}\n`;
+    for (const c of it.components || []) t += `${BIG} - ${c.quantity ? c.quantity + 'x ' : ''}${c.name || ''}${NORM}\n`;
+    if (it.notes) t += BIG + ' ' + it.notes + NORM + '\n';
+  }
+  t += rule() + '\n';
+  if (order.notes) t += BIG + 'Nota: ' + order.notes + NORM + '\n';
+  t += '\n' + BIG + center(station.toUpperCase(), W / 2) + NORM + '\n' + rule() + '\n';
+  return t;
+}
+
+/**
+ * Imprime (reimprime) una comanda en su estación. Con `type` ('food'/'drink')
+ * solo van los renglones de esa estación (comida -> cocina, bebida -> barra).
+ */
+export function printTicket(order, opts = {}) {
+  const items = (order.items || []).filter(
+    (it) => !opts.type || (it.menuItem?.type || 'food') === opts.type,
+  );
+  if (items.length === 0) return Promise.resolve();
+  const station = (opts.station || (opts.type === 'drink' ? 'barra' : 'cocina')).toLowerCase();
+  return send(station, comandaText(order, items, station));
+}
+
+/**
+ * Imprime el RECIBO del cliente en la impresora de caja. En domicilio separa
+ * productos y envío al motorista.
+ * data: { orderId, label, lines:[{quantity,name,subtotal}], productTotal,
+ *         discount, courierFee, isDelivery, total, fecha }
+ */
+export function printReceipt(data = {}) {
+  return send('caja', receiptText(data));
 }

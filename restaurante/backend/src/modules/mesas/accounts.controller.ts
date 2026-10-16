@@ -54,6 +54,13 @@ export class AccountsController {
     return this.accountsService.findDelivery();
   }
 
+  /** Historial de cuentas (registro cuenta por cuenta). */
+  @Get('history')
+  @Roles(Role.ADMINISTRATOR, Role.CASHIER)
+  history() {
+    return this.accountsService.history();
+  }
+
   @Get(':id')
   @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
   findOne(@Param('id', ParseIntPipe) id: number) {
@@ -93,15 +100,40 @@ export class AccountsController {
     return this.accountsService.setDelivery(id, dto.isDelivery, dto.courierFee ?? 0, user);
   }
 
-  /** Descuento a criterio del mesero (requiere descripción). */
+  /** Descuento directo: SOLO el administrador. */
   @Post(':id/discount')
-  @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
+  @Roles(Role.ADMINISTRATOR)
   setDiscount(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: SetDiscountDto,
     @CurrentUser() user: AuthUser,
   ) {
     return this.accountsService.setDiscount(id, dto.amount, dto.reason ?? '', user);
+  }
+
+  /** Solicitud de descuento (cajero/mesero/admin). La autoriza el administrador. */
+  @Post(':id/discount-request')
+  @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
+  requestDiscount(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetDiscountDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.accountsService.requestDiscount(id, dto.amount, dto.reason ?? '', user);
+  }
+
+  /** El administrador autoriza la solicitud pendiente. */
+  @Post(':id/discount-approve')
+  @Roles(Role.ADMINISTRATOR)
+  approveDiscount(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
+    return this.accountsService.approveDiscount(id, user);
+  }
+
+  /** El administrador rechaza la solicitud pendiente. */
+  @Post(':id/discount-reject')
+  @Roles(Role.ADMINISTRATOR)
+  rejectDiscount(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
+    return this.accountsService.rejectDiscount(id, user);
   }
 
   /** Entrega de orden para llevar (entregada / pendiente). */
@@ -121,9 +153,9 @@ export class AccountsController {
     return this.accountsService.cancel(id, user);
   }
 
-  /** Elimina la cuenta por completo (borrado permanente). Solo administrador. */
+  /** Elimina la cuenta por completo (borrado permanente). Sin cobros registrados. */
   @Delete(':id')
-  @Roles(Role.ADMINISTRATOR)
+  @Roles(Role.ADMINISTRATOR, Role.CASHIER, Role.WAITER)
   remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
     return this.accountsService.remove(id, user);
   }

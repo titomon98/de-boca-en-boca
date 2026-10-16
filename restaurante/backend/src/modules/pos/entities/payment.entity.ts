@@ -55,6 +55,6 @@ export class Payment {
   })
   tip: number;
 
-  @CreateDateColumn({ name: 'date', type: 'timestamp' })
+  @CreateDateColumn({ name: 'date', type: 'timestamptz' })
   date: Date;
 }

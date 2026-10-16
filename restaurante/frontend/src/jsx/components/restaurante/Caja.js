@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Card, Table, Button, Badge, Spinner } from 'react-bootstrap';
 import swal from 'sweetalert';
 import { AccountsApi, TablesApi } from '../../../services/RestaurantApi';
-import { money } from '../../../services/helpers';
+import { money, fmtTime } from '../../../services/helpers';
 
 // Etiqueta de las mesas de una cuenta (nombre, número, o "Para llevar").
 const accountTables = (a) =>
@@ -34,7 +34,7 @@ const Caja = () => {
 				swal('Error', 'No existe una mesa "para llevar" configurada.', 'error');
 				return;
 			}
-			const label = `Para llevar ${new Date().toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' })}`;
+			const label = `Para llevar ${fmtTime()}`;
 			const acc = await AccountsApi.open({ label, tableIds: [takeout.id] });
 			navigate(`/cuenta/${acc.id}`);
 		} catch (e) {
@@ -92,6 +92,11 @@ const Caja = () => {
 												<Badge bg={a.status === 'billing' ? 'danger' : 'warning'}>
 													{a.status === 'billing' ? 'Cobrando' : 'Abierta'}
 												</Badge>
+												{a.discountRequest != null && (
+													<Badge bg="info" className="ms-1" title="Solicitud de descuento pendiente">
+														<i className="fa-solid fa-tag me-1"></i>Descuento solicitado
+													</Badge>
+												)}
 											</td>
 											<td className="text-end font-w600">
 												{money(net)}

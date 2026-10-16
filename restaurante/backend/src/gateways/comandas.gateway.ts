@@ -8,6 +8,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { timingSafeEqual } from 'crypto';
 import { JwtPayload } from '../modules/auth/strategies/jwt.strategy';
 
 /**
@@ -41,6 +42,26 @@ export class ComandasGateway
   ) {}
 
   handleConnection(client: Socket) {
+    // Puente de impresión del restaurante: se autentica con PRINT_BRIDGE_KEY
+    // (no es un usuario) y solo escucha las comandas para imprimirlas.
+    const bridgeKey = String(client.handshake.auth?.bridgeKey || '');
+    if (bridgeKey) {
+      const expected = Buffer.from(this.config.get<string>('PRINT_BRIDGE_KEY') || '');
+      const given = Buffer.from(bridgeKey);
+      const ok =
+        expected.length > 0 &&
+        given.length === expected.length &&
+        timingSafeEqual(given, expected);
+      if (!ok) {
+        this.logger.warn(`Puente rechazado (clave inválida): ${client.id}`);
+        client.disconnect(true);
+        return;
+      }
+      client.join(['staff', 'bridge']);
+      this.logger.log(`Puente de impresión conectado: ${client.id}`);
+      return;
+    }
+
     const token =
       (client.handshake.auth?.token as string) ||
       (client.handshake.query?.token as string);
@@ -77,6 +98,18 @@ export class ComandasGateway
   /** Emite una comanda nueva a cocina y al personal de salón. */
   emitNewOrder(order: unknown) {
     this.server.to('kitchen').to('staff').emit('comanda:nueva', order);
+  }
+
+  /**
+   * Manda un ticket ya armado (texto ESC/POS) al puente de impresión, que lo
+   * imprime en la impresora de la estación ('cocina' | 'barra' | 'caja').
+   * Devuelve false si no hay puente conectado.
+   */
+  async emitPrint(station: string, text: string): Promise<boolean> {
+    const bridges = await this.server.in('bridge').fetchSockets();
+    if (bridges.length === 0) return false;
+    this.server.to('bridge').emit('imprimir', { station, text });
+    return true;
   }
 
   /** Emite el cambio de estado de una comanda. */

@@ -38,6 +38,6 @@ export class RestaurantTable {
   @Column({ type: 'varchar', length: 40, nullable: true })
   name: string | null;
 
-  @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }

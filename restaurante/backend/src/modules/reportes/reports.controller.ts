@@ -41,6 +41,16 @@ export class ReportsController {
     );
   }
 
+  @Get('category-ranking')
+  categoryRanking(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.reportsService.categoryRanking(from, to);
+  }
+
+  @Get('sales-by-type')
+  salesByType(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.reportsService.salesByType(from, to);
+  }
+
   @Get('sales-by-day')
   salesByDay(@Query('from') from?: string, @Query('to') to?: string) {
     return this.reportsService.salesByDay(from, to);

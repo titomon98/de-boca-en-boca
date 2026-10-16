@@ -58,17 +58,17 @@ export class Account {
   })
   tables: RestaurantTable[];
 
-  @Column({ name: 'opened_at', type: 'timestamp', default: () => 'now()' })
+  @Column({ name: 'opened_at', type: 'timestamptz', default: () => 'now()' })
   openedAt: Date;
 
-  @Column({ name: 'closed_at', type: 'timestamp', nullable: true })
+  @Column({ name: 'closed_at', type: 'timestamptz', nullable: true })
   closedAt: Date | null;
 
   /**
    * Entrega (para llevar). Independiente del cobro: NULL = pendiente de entrega,
    * con fecha = entregada. Se combina libremente con el estado de pago.
    */
-  @Column({ name: 'delivered_at', type: 'timestamp', nullable: true })
+  @Column({ name: 'delivered_at', type: 'timestamptz', nullable: true })
   deliveredAt: Date | null;
 
   /** Descuento aplicado (a criterio del mesero). Neto a pagar = total - discount. */
@@ -83,6 +83,23 @@ export class Account {
 
   @Column({ name: 'discount_reason', type: 'varchar', length: 255, nullable: true })
   discountReason: string | null;
+
+  /** Solicitud de descuento pendiente de autorización del administrador. */
+  @Column({
+    name: 'discount_request',
+    type: 'numeric',
+    precision: 12,
+    scale: 2,
+    nullable: true,
+    transformer: numericTransformer,
+  })
+  discountRequest: number | null;
+
+  @Column({ name: 'discount_request_reason', type: 'varchar', length: 255, nullable: true })
+  discountRequestReason: string | null;
+
+  @Column({ name: 'discount_request_by', type: 'varchar', length: 150, nullable: true })
+  discountRequestBy: string | null;
 
   /** Sede/local al que pertenece la cuenta (infraestructura multi-local). */
   @Column({ name: 'venue_id', type: 'int', nullable: true })

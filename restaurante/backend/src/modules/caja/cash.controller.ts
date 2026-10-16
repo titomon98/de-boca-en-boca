@@ -2,11 +2,15 @@ import {
   Body,
   Controller,
   Get,
+  Param,
+  ParseIntPipe,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
 import { CashService } from './cash.service';
 import { CreateCashClosingDto } from './dto/create-cash-closing.dto';
+import { UpdateCashClosingDto } from './dto/update-cash-closing.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -37,5 +41,16 @@ export class CashController {
   @Get()
   findAll() {
     return this.cashService.findAll();
+  }
+
+  /** Edita un cierre (conteo/nota). Solo administrador; queda en bitácora. */
+  @Patch(':id')
+  @Roles(Role.ADMINISTRATOR)
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateCashClosingDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.cashService.update(id, dto, user);
   }
 }

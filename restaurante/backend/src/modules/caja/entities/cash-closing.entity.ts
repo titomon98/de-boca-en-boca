@@ -21,7 +21,7 @@ export class CashClosing {
   @JoinColumn({ name: 'user_id' })
   user: User;
 
-  @CreateDateColumn({ name: 'date', type: 'timestamp' })
+  @CreateDateColumn({ name: 'date', type: 'timestamptz' })
   date: Date;
 
   @Column({

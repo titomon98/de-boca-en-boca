@@ -126,6 +126,7 @@ const SideBar = () => {
                               <span className="nav-text">{data.title}</span>
                           </NavLink>
                         }
+                        {data.content && data.content.length > 0 && (
                         <Collapse in={state.active === data.title ? true :false}>
                           <ul className={`${menuClass === "mm-collapse" ? "mm-show" : ""}`}>
                             {data.content && data.content.map((data,index) => {									
@@ -165,6 +166,7 @@ const SideBar = () => {
                             })}
                           </ul>
                         </Collapse>
+                        )}
                       </li>	
                     )
                 }

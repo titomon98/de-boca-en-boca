@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, In, Repository } from 'typeorm';
+import { DataSource, In, MoreThanOrEqual, Not, Repository } from 'typeorm';
 import { Order } from './entities/order.entity';
 import { OrderItem } from './entities/order-item.entity';
 import { Account } from '../mesas/entities/account.entity';
@@ -26,8 +26,8 @@ const STATUS_ACTION: Record<string, string> = {
   pending: 'comanda_reabierta',
 };
 
-/** Estados que cocina considera "activos". */
-const ACTIVE_STATUSES = ['pending', 'in_preparation', 'ready'];
+/** Ventana de cocina/barra: solo comandas de menos de 300 minutos. */
+export const KITCHEN_WINDOW_MIN = 300;
 
 @Injectable()
 export class ComandasService {
@@ -107,12 +107,17 @@ export class ComandasService {
       const createdIds: number[] = [];
       let accountTotal = Number(account.total);
 
-      for (const [, lines] of groups) {
+      for (const [station, lines] of groups) {
         const order = manager.create(Order, {
           accountId: account.id,
           waiterId: user.id,
-          status: 'in_preparation',
-          notes: dto.notes ?? null,
+          // Cocina y barra ya no marcan a mano: la comanda se imprime y se asume
+          // preparada y entregada. El tiempo de la mesa se mide por ordenó -> pagó.
+          status: 'delivered',
+          notes:
+            (station === 'drink' ? dto.notesBarra : dto.notesCocina) ??
+            dto.notes ??
+            null,
         });
         await manager.save(order);
         createdIds.push(order.id);
@@ -139,7 +144,36 @@ export class ComandasService {
             const remaining = [...chosen];
             for (const g of choiceGroups) {
               const picked = remaining.filter((id) => g.optionItemIds.includes(id));
-              if (picked.length !== g.choose) {
+              if (g.distribute) {
+                // Distribución: deben sumar `total` repartidas entre 1..maxOptions sabores.
+                const need = Number(g.total) || 0;
+                if (picked.length !== need) {
+                  throw new BadRequestException(
+                    `"${menuItem.name}": debe repartir ${need} de "${g.label}"`,
+                  );
+                }
+                const distinct = new Set(picked).size;
+                const maxOpt = Number(g.maxOptions) || distinct;
+                if (distinct < 1 || distinct > maxOpt) {
+                  throw new BadRequestException(
+                    `"${menuItem.name}": elija entre 1 y ${maxOpt} de "${g.label}"`,
+                  );
+                }
+                // Cada sabor va en múltiplos del paso (alitas de 10 en 10, sampler
+                // de 5 en 5). Si el grupo no trae step: total / máximo de sabores.
+                const step =
+                  Number(g.step) ||
+                  Math.max(1, Math.floor(need / (Number(g.maxOptions) || 1)));
+                const perFlavor = new Map<number, number>();
+                for (const id of picked) perFlavor.set(id, (perFlavor.get(id) ?? 0) + 1);
+                for (const count of perFlavor.values()) {
+                  if (count % step !== 0) {
+                    throw new BadRequestException(
+                      `"${menuItem.name}": cada sabor va de ${step} en ${step}`,
+                    );
+                  }
+                }
+              } else if (picked.length !== g.choose) {
                 throw new BadRequestException(
                   `"${menuItem.name}": debe elegir ${g.choose} de "${g.label}"`,
                 );
@@ -329,12 +363,17 @@ export class ComandasService {
     return updated;
   }
 
-  /** Vista de cocina: comandas activas, más antiguas primero. */
+  /**
+   * Vista de cocina/barra: comandas recientes (menos de 300 minutos, no anuladas)
+   * como feed para imprimir/reimprimir, más nuevas primero. Ya no hay avance
+   * manual de estado.
+   */
   findActive(): Promise<Order[]> {
+    const since = new Date(Date.now() - KITCHEN_WINDOW_MIN * 60 * 1000);
     return this.ordersRepository.find({
-      where: { status: In(ACTIVE_STATUSES) },
+      where: { status: Not('cancelled'), createdAt: MoreThanOrEqual(since) },
       relations: { items: true },
-      order: { createdAt: 'ASC' },
+      order: { createdAt: 'DESC' },
     });
   }
 

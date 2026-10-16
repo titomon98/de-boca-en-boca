@@ -49,6 +49,7 @@ const MenuAdmin = () => {
 	const [comboItem, setComboItem] = useState(null); // combo en vista de "qué incluye"
 	const [editCat, setEditCat] = useState(null); // categoría en edición
 	const [editCatName, setEditCatName] = useState('');
+	const [q, setQ] = useState(''); // buscador del menú
 
 	const load = useCallback(async () => {
 		const [m, c] = await Promise.all([MenuApi.list(), MenuApi.categories()]);
@@ -174,6 +175,8 @@ const MenuAdmin = () => {
 			text: it.name,
 			icon: 'warning',
 			buttons: ['Cancelar', 'Eliminar'],
+			closeOnClickOutside: false,
+			closeOnEsc: false,
 			dangerMode: true,
 		}).then(async (ok) => {
 			if (ok) {
@@ -209,6 +212,8 @@ const MenuAdmin = () => {
 			text: `${c.name}. Los platillos quedarán sin categoría.`,
 			icon: 'warning',
 			buttons: ['Cancelar', 'Eliminar'],
+			closeOnClickOutside: false,
+			closeOnEsc: false,
 			dangerMode: true,
 		}).then(async (ok) => {
 			if (ok) {
@@ -221,6 +226,15 @@ const MenuAdmin = () => {
 			}
 		});
 	};
+
+	// Buscador: filtra por nombre, categoría o descripción.
+	const term = q.trim().toLowerCase();
+	const visible = term
+		? items.filter((it) =>
+			(it.name || '').toLowerCase().includes(term) ||
+			(it.category?.name || '').toLowerCase().includes(term) ||
+			(it.description || '').toLowerCase().includes(term))
+		: items;
 
 	if (loading) return <div className="text-center p-5"><Spinner animation="border" variant="primary" /></div>;
 
@@ -240,7 +254,24 @@ const MenuAdmin = () => {
 
 			<Card>
 				<Card.Body>
-					<Table responsive hover className="align-middle">
+					<div className="mb-3 position-relative" style={{ maxWidth: 420 }}>
+							<i className="fa-solid fa-magnifying-glass position-absolute text-muted" style={{ left: 12, top: '50%', transform: 'translateY(-50%)' }}></i>
+							<Form.Control
+								placeholder="Buscar por nombre, categoría o descripción"
+								value={q}
+								onChange={(e) => setQ(e.target.value)}
+								style={{ paddingLeft: 36 }}
+							/>
+							{q && (
+								<Button variant="link" className="position-absolute p-0 text-muted" style={{ right: 10, top: '50%', transform: 'translateY(-50%)' }} onClick={() => setQ('')} title="Limpiar">
+									<i className="fa-solid fa-xmark"></i>
+								</Button>
+							)}
+						</div>
+						{visible.length === 0 && (
+							<p className="text-muted">No hay productos que coincidan con "{q}".</p>
+						)}
+						<Table responsive hover className="align-middle">
 						<thead>
 							<tr>
 								<th style={{ width: 64 }}></th>
@@ -253,7 +284,7 @@ const MenuAdmin = () => {
 							</tr>
 						</thead>
 						<tbody>
-							{items.map((it) => (
+							{visible.map((it) => (
 								<tr key={it.id}>
 									<td>
 										{it.image ? (
@@ -303,7 +334,7 @@ const MenuAdmin = () => {
 			</Card>
 
 			{/* Modal platillo */}
-			<Modal show={show} onHide={() => setShow(false)} centered>
+			<Modal show={show} onHide={() => setShow(false)} centered backdrop="static" keyboard={false}>
 				<Modal.Header closeButton>
 					<Modal.Title>{editing ? 'Editar platillo' : 'Nuevo platillo'}</Modal.Title>
 				</Modal.Header>
@@ -440,7 +471,7 @@ const MenuAdmin = () => {
 			</Modal>
 
 			{/* Modal gestión de categorías */}
-			<Modal show={showCat} onHide={() => { setShowCat(false); setEditCat(null); }} centered>
+			<Modal show={showCat} onHide={() => { setShowCat(false); setEditCat(null); }} centered backdrop="static" keyboard={false}>
 				<Modal.Header closeButton><Modal.Title>Categorías</Modal.Title></Modal.Header>
 				<Modal.Body>
 					<div className="d-flex gap-2 mb-3">
@@ -496,7 +527,7 @@ const MenuAdmin = () => {
 			</Modal>
 
 			{/* Modal: qué incluye el combo */}
-			<Modal show={!!comboItem} onHide={() => setComboItem(null)} centered>
+			<Modal show={!!comboItem} onHide={() => setComboItem(null)} centered backdrop="static" keyboard={false}>
 				<Modal.Header closeButton>
 					<Modal.Title>
 						{comboItem?.name} <Badge bg="warning" text="dark">Combo</Badge>

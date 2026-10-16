@@ -1,21 +1,37 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Card, Row, Col, Button, Form, Badge, Modal, Table, Spinner } from 'react-bootstrap';
 import swal from 'sweetalert';
 import {
 	AccountsApi, OrdersApi, MenuApi, TablesApi, PaymentsApi,
 } from '../../../services/RestaurantApi';
 import {
-	money, ORDER_STATUS, getCurrentUser, ROLES, AUDIT_ACTIONS, ROLE_LABELS, PAYMENT_METHODS, paymentLabel,
+	money, ORDER_STATUS, getCurrentUser, ROLES, AUDIT_ACTIONS, ROLE_LABELS, PAYMENT_METHODS, paymentLabel, fmtDateTime,
 } from '../../../services/helpers';
+import { printReceipt } from '../../../services/printTicket';
 import MenuPicker from './MenuPicker';
 
 const CuentaDetail = () => {
 	const { id } = useParams();
 	const navigate = useNavigate();
+	// Regresar a la pantalla de la que se vino (Cobros, Historial, Caja, Mesas...).
+	// Si se entró directo (sin pantalla previa en la app), cae al área de la cuenta.
+	const location = useLocation();
+	const goBack = () => {
+		// location.key === 'default' solo cuando se entró directo (recarga/enlace);
+		// si se llegó navegando dentro de la app, se regresa a esa pantalla.
+		if (location.key && location.key !== 'default') {
+			navigate(-1);
+			return;
+		}
+		const tables = account?.tables || [];
+		const takeout = tables.some((t) => t.isTakeout || t.number === 0);
+		navigate(account?.isDelivery ? '/a-domicilio' : takeout ? '/para-llevar' : '/mesas');
+	};
 	const user = getCurrentUser();
 	const canPay = [ROLES.ADMIN, ROLES.CASHIER].includes(user.role);
 	const canOrder = [ROLES.ADMIN, ROLES.WAITER].includes(user.role);
+	const isAdmin = user.role === ROLES.ADMIN;
 
 	const [loading, setLoading] = useState(true);
 	const [account, setAccount] = useState(null);
@@ -23,7 +39,8 @@ const CuentaDetail = () => {
 	const [menu, setMenu] = useState([]);
 	const [categories, setCategories] = useState([]);
 	const [cart, setCart] = useState([]); // { lineId, menuItem, quantity, notes, choices, chosenItemIds }
-	const [orderNotes, setOrderNotes] = useState('');
+	const [notesCocina, setNotesCocina] = useState('');
+	const [notesBarra, setNotesBarra] = useState('');
 
 	// selección de extras incluidos (ej. sabor del aderezo) al agregar un platillo
 	const [showConfig, setShowConfig] = useState(false);
@@ -36,6 +53,8 @@ const CuentaDetail = () => {
 	// pago
 	const [showPay, setShowPay] = useState(false);
 	const [payAmount, setPayAmount] = useState('');
+	// Envío al motorista que se cobra al cliente (solo cuentas a domicilio), se pide al cobrar.
+	const [payFee, setPayFee] = useState('');
 	const [payMethod, setPayMethod] = useState('cash');
 	const [paid, setPaid] = useState(0);
 
@@ -88,10 +107,26 @@ const CuentaDetail = () => {
 	const optProduct = (id) => (menu || []).find((x) => x.id === id);
 	const productName = (id) => optProduct(id)?.name || `#${id}`;
 	const choose = (g) => Math.max(1, Number(g.choose) || 1);
+	// Grupo de distribución (ej. sabores de alitas): reparte un total de unidades
+	// entre los sabores elegidos (auto-parejo y ajustable), con un máximo de sabores.
+	const groupTarget = (g) => (g.distribute ? Math.max(1, Number(g.total) || 1) : choose(g));
+	const maxOptions = (g) => (g.distribute ? Math.max(1, Number(g.maxOptions) || 1) : Infinity);
+	// Paso de ajuste de la distribución (ej. alitas de 10 en 10, sampler de 5 en 5).
+	// Si el grupo no trae `step`, se deduce: total / máximo de sabores
+	// (10/1, 20/2, 30/3 -> 10; sampler 60/12 -> 5). Nunca de 1 en 1.
+	const stepOf = (g) => {
+		if (!g.distribute) return 1;
+		if (Number(g.step) > 0) return Number(g.step);
+		const total = Number(g.total) || 1;
+		const max = Number(g.maxOptions) || 1;
+		return Math.max(1, Math.floor(total / max));
+	};
 
 	// configChoices: { [label]: { [itemId]: cantidad } }
 	const groupTotal = (label) =>
 		Object.values(configChoices[label] || {}).reduce((a, b) => a + b, 0);
+	const distinctCount = (label) =>
+		Object.values(configChoices[label] || {}).filter((n) => n > 0).length;
 	const incChoice = (label, itemId) =>
 		setConfigChoices((c) => ({
 			...c,
@@ -105,9 +140,50 @@ const CuentaDetail = () => {
 			else g[itemId] = n;
 			return { ...c, [label]: g };
 		});
-	// Listo cuando cada grupo tiene elegidos exactamente los que pide.
+
+	// Suma n (puede ser negativo) a un sabor; si queda en 0 o menos, lo quita.
+	const addN = (label, itemId, n) =>
+		setConfigChoices((c) => {
+			const g = { ...(c[label] || {}) };
+			const v = (g[itemId] || 0) + n;
+			if (v <= 0) delete g[itemId];
+			else g[itemId] = v;
+			return { ...c, [label]: g };
+		});
+
+	// Reparte `total` en múltiplos de `step` entre los ids (resto a los primeros).
+	const redistribute = (label, ids, total, step) =>
+		setConfigChoices((c) => {
+			if (ids.length === 0) return { ...c, [label]: {} };
+			const units = Math.max(1, Math.round(total / step));
+			const base = Math.floor(units / ids.length);
+			const rem = units - base * ids.length;
+			const next = {};
+			ids.forEach((id, i) => { next[id] = (base + (i < rem ? 1 : 0)) * step; });
+			return { ...c, [label]: next };
+		});
+	// Toca un sabor: lo agrega o lo quita y vuelve a repartir parejo (por paso).
+	const toggleFlavor = (g, oid) => {
+		const cur = configChoices[g.label] || {};
+		const selected = Object.keys(cur).filter((id) => cur[id] > 0).map(Number);
+		if (cur[oid] > 0) {
+			redistribute(g.label, selected.filter((id) => id !== oid), groupTarget(g), stepOf(g));
+		} else {
+			if (selected.length >= maxOptions(g)) return;
+			redistribute(g.label, [...selected, oid], groupTarget(g), stepOf(g));
+		}
+	};
+
+	// Listo cuando cada grupo suma lo que pide (y, si es distribución, respeta el máximo de sabores).
 	const configReady = configItem
-		? choiceGroups(configItem).every((g) => groupTotal(g.label) === choose(g))
+		? choiceGroups(configItem).every((g) => {
+			const total = groupTotal(g.label);
+			if (g.distribute) {
+				const d = distinctCount(g.label);
+				return total === groupTarget(g) && d >= 1 && d <= maxOptions(g);
+			}
+			return total === choose(g);
+		})
 		: false;
 
 	const addToCart = (item) => {
@@ -171,7 +247,8 @@ const CuentaDetail = () => {
 		try {
 			await OrdersApi.create({
 				accountId: Number(id),
-				notes: orderNotes || undefined,
+				notesCocina: notesCocina || undefined,
+				notesBarra: notesBarra || undefined,
 				items: cart.map((x) => {
 					const ch = (x.choices || []).length ? x.choices.join('; ') : '';
 					const notes = [ch, x.notes].filter(Boolean).join(' · ');
@@ -184,9 +261,10 @@ const CuentaDetail = () => {
 				}),
 			});
 			setCart([]);
-			setOrderNotes('');
+			setNotesCocina('');
+			setNotesBarra('');
 			await load();
-			swal('Enviada', 'La comanda fue enviada a cocina.', 'success');
+			swal('Enviada', 'La comanda fue enviada.', 'success');
 		} catch (e) {
 			swal('Error', e?.response?.data?.message || 'No se pudo enviar la comanda', 'error');
 		} finally {
@@ -203,9 +281,14 @@ const CuentaDetail = () => {
 		}
 	};
 
+	// Neto con un envío dado (en domicilio el envío al motorista se le cobra al cliente).
+	const netWithFee = (fee) =>
+		Number(account.total) - Number(account.discount || 0) + (account.isDelivery ? Number(fee) || 0 : 0);
+
 	const openPay = () => {
-		const net = Number(account.total) - Number(account.discount || 0) + (account.isDelivery ? Number(account.courierFee || 0) : 0);
-		const rem = Math.max(net - paid, 0);
+		const fee = Number(account.courierFee || 0);
+		setPayFee(account.isDelivery && fee > 0 ? fee.toFixed(2) : '');
+		const rem = Math.max(netWithFee(fee) - paid, 0);
 		setPayAmount(rem ? rem.toFixed(2) : '');
 		setPayMethod('cash');
 		setTipEnabled(false);
@@ -215,9 +298,15 @@ const CuentaDetail = () => {
 
 	// Recordatorio para cuadrar caja: en envíos sale efectivo para el motorista.
 	const courierNote = () =>
-		account.isDelivery && Number(account.courierFee) > 0
-			? ` Envío: entregue ${money(account.courierFee)} en efectivo de caja al motorista.`
+		account.isDelivery && Number(payFee) > 0
+			? ` Envío: al entregar, dé ${money(payFee)} en efectivo de caja al motorista.`
 			: '';
+
+	// Al cambiar el envío en el cobro, se recalcula el monto a cobrar.
+	const changePayFee = (v) => {
+		setPayFee(v);
+		setPayAmount(Math.max(netWithFee(Number(v) || 0) - paid, 0).toFixed(2));
+	};
 
 	const submitPay = async () => {
 		const amount = Number(payAmount);
@@ -227,11 +316,18 @@ const CuentaDetail = () => {
 		}
 		const tip = tipEnabled ? Number(tipAmount) || 0 : 0;
 		try {
+			// En domicilio, primero se guarda el envío (se cobra al cliente) y luego el pago.
+			if (account.isDelivery) {
+				const fee = Math.round((Number(payFee) || 0) * 100) / 100;
+				if (fee !== Math.round(Number(account.courierFee || 0) * 100) / 100) {
+					await AccountsApi.setDelivery(Number(id), true, fee);
+				}
+			}
 			const res = await PaymentsApi.pay({ accountId: Number(id), amount, paymentMethod: payMethod, tip });
 			setShowPay(false);
 			if (res.accountStatus === 'paid') {
 				swal('Cuenta pagada', `La cuenta fue liquidada.${courierNote()}`, 'success').then(() =>
-					navigate(backTo),
+					goBack(),
 				);
 			} else {
 				await load();
@@ -270,7 +366,7 @@ const CuentaDetail = () => {
 			setShowPayItems(false);
 			if (res.accountStatus === 'paid') {
 				swal('Cuenta pagada', `La cuenta fue liquidada.${courierNote()}`, 'success').then(() =>
-					navigate(backTo),
+					goBack(),
 				);
 			} else {
 				await load();
@@ -294,11 +390,34 @@ const CuentaDetail = () => {
 			return;
 		}
 		try {
-			await AccountsApi.setDiscount(Number(id), amount, discountReason.trim());
+			// El administrador aplica directo; cajero/mesero solo solicitan.
+			if (isAdmin) {
+				await AccountsApi.setDiscount(Number(id), amount, discountReason.trim());
+			} else {
+				await AccountsApi.requestDiscount(Number(id), amount, discountReason.trim());
+				swal('Solicitado', 'El descuento quedó pendiente de autorización del administrador.', 'success');
+			}
 			setShowDiscount(false);
 			await load();
 		} catch (e) {
-			swal('Error', e?.response?.data?.message || 'No se pudo aplicar el descuento', 'error');
+			swal('Error', e?.response?.data?.message || 'No se pudo registrar el descuento', 'error');
+		}
+	};
+
+	const approveDiscount = async () => {
+		try {
+			await AccountsApi.approveDiscount(Number(id));
+			await load();
+		} catch (e) {
+			swal('Error', e?.response?.data?.message || 'No se pudo autorizar', 'error');
+		}
+	};
+	const rejectDiscount = async () => {
+		try {
+			await AccountsApi.rejectDiscount(Number(id));
+			await load();
+		} catch (e) {
+			swal('Error', e?.response?.data?.message || 'No se pudo rechazar', 'error');
 		}
 	};
 
@@ -309,6 +428,8 @@ const CuentaDetail = () => {
 			text: `Comanda #${o.id}. Se descontará de la cuenta.`,
 			icon: 'warning',
 			buttons: ['Cancelar', 'Anular comanda'],
+			closeOnClickOutside: false,
+			closeOnEsc: false,
 			dangerMode: true,
 		}).then(async (ok) => {
 			if (!ok) return;
@@ -327,6 +448,8 @@ const CuentaDetail = () => {
 			text: `${it.menuItem?.name || 'Platillo'} x${it.quantity}`,
 			icon: 'warning',
 			buttons: ['Cancelar', 'Anular'],
+			closeOnClickOutside: false,
+			closeOnEsc: false,
 			dangerMode: true,
 		}).then(async (ok) => {
 			if (!ok) return;
@@ -345,6 +468,8 @@ const CuentaDetail = () => {
 			text: `${money(p.amount)} (${paymentLabel(p.paymentMethod)}). Quedará registrado en la bitácora.`,
 			icon: 'warning',
 			buttons: ['Cancelar', 'Anular cobro'],
+			closeOnClickOutside: false,
+			closeOnEsc: false,
 			dangerMode: true,
 		}).then(async (ok) => {
 			if (!ok) return;
@@ -363,13 +488,15 @@ const CuentaDetail = () => {
 			text: 'Se borrarán sus comandas y pagos, y se liberarán sus mesas. Esta acción no se puede deshacer.',
 			icon: 'warning',
 			buttons: ['Cancelar', 'Eliminar cuenta'],
+			closeOnClickOutside: false,
+			closeOnEsc: false,
 			dangerMode: true,
 		}).then(async (ok) => {
 			if (!ok) return;
 			try {
 				await AccountsApi.remove(id);
 				swal('Cuenta eliminada', 'La cuenta se eliminó y las mesas quedaron libres.', 'success').then(() =>
-					navigate('/mesas'),
+					goBack(),
 				);
 			} catch (e) {
 				swal('Error', e?.response?.data?.message || 'No se pudo eliminar la cuenta', 'error');
@@ -411,16 +538,33 @@ const CuentaDetail = () => {
 	const isTakeout = (account.tables || []).some((t) => t.isTakeout || t.number === 0);
 	const isDelivery = !!account.isDelivery;
 	const areaLabel = isDelivery ? 'A domicilio' : isTakeout ? 'Para llevar' : 'Mesas';
-	const backTo = isDelivery ? '/a-domicilio' : isTakeout ? '/para-llevar' : '/mesas';
 	// No se puede cobrar una cuenta en Q0 (no se ha ordenado nada).
 	const nothingToCharge = net <= 0;
+
+	// Recibo imprimible: desglosa productos y, en domicilio, el envío al motorista.
+	const printAccount = () => {
+		const lines = (orders || [])
+			.filter((o) => o.status !== 'cancelled')
+			.flatMap((o) => o.items || [])
+			.map((it) => ({ quantity: it.quantity, name: it.menuItem?.name || '', subtotal: it.subtotal }));
+		printReceipt({
+			orderId: account.id,
+			label: account.label,
+			lines,
+			productTotal: account.total,
+			discount,
+			courierFee: courierCharge,
+			isDelivery,
+			total: net,
+		});
+	};
 
 	return (
 		<>
 			<div className="d-flex justify-content-between align-items-center flex-wrap mb-3">
 				<div>
-					<Button variant="light" size="sm" className="mb-2" onClick={() => navigate(backTo)}>
-						<i className="bi bi-arrow-left me-1"></i>{areaLabel}
+					<Button variant="light" size="sm" className="mb-2" onClick={() => goBack()}>
+						<i className="bi bi-arrow-left me-1"></i>Atrás
 					</Button>
 					<h3 className="mb-0">{account.label}</h3>
 					<span className="text-muted">
@@ -453,6 +597,33 @@ const CuentaDetail = () => {
 					)}
 					{paid > 0 && <small className="text-muted">Pagado {money(paid)} · Saldo {money(remaining)}</small>}
 				</div>
+			</div>
+
+			{account.discountRequest != null && (
+				<div className="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+					<div>
+						<i className="fa-solid fa-tag me-1"></i>
+						<strong>Descuento solicitado: {money(account.discountRequest)}</strong>
+						{account.discountRequestReason ? ` - ${account.discountRequestReason}` : ''}
+						{account.discountRequestBy ? <span className="text-muted"> (por {account.discountRequestBy})</span> : null}
+					</div>
+					{isAdmin ? (
+						<div className="d-flex gap-2">
+							<Button variant="success" size="sm" onClick={approveDiscount}>
+								<i className="fa-solid fa-check me-1"></i>Autorizar
+							</Button>
+							<Button variant="outline-danger" size="sm" onClick={rejectDiscount}>Rechazar</Button>
+						</div>
+					) : (
+						<Badge bg="secondary">Pendiente de autorización</Badge>
+					)}
+				</div>
+			)}
+
+			<div className="mb-3">
+				<Button variant="outline-primary" size="sm" onClick={printAccount} disabled={nothingToCharge}>
+					<i className="fa-solid fa-print me-1"></i>Imprimir recibo
+				</Button>
 			</div>
 
 			{!closed && (
@@ -498,7 +669,7 @@ const CuentaDetail = () => {
 
 					{(canOrder || canPay) && (
 						<Button variant="outline-secondary" size="sm" onClick={openDiscount}>
-							<i className="fa-solid fa-tag me-1"></i>Descuento
+							<i className="fa-solid fa-tag me-1"></i>{isAdmin ? 'Descuento' : 'Solicitar descuento'}
 						</Button>
 					)}
 
@@ -571,18 +742,32 @@ const CuentaDetail = () => {
 							onAdd={addToCart}
 							onRemove={removeOne}
 						/>
-						<Form.Control
-							as="textarea"
-							rows={2}
-							className="mt-3"
-							placeholder="Nota general de la comanda"
-							value={orderNotes}
-							onChange={(e) => setOrderNotes(e.target.value)}
-						/>
+						<Row className="mt-3 g-2">
+							<Col md={6}>
+								<Form.Label className="mb-1"><i className="fa-solid fa-utensils me-1"></i>Nota para cocina</Form.Label>
+								<Form.Control
+									as="textarea"
+									rows={2}
+									placeholder="Indicaciones de los platillos"
+									value={notesCocina}
+									onChange={(e) => setNotesCocina(e.target.value)}
+								/>
+							</Col>
+							<Col md={6}>
+								<Form.Label className="mb-1"><i className="fa-solid fa-martini-glass me-1"></i>Nota para barra</Form.Label>
+								<Form.Control
+									as="textarea"
+									rows={2}
+									placeholder="Indicaciones de las bebidas"
+									value={notesBarra}
+									onChange={(e) => setNotesBarra(e.target.value)}
+								/>
+							</Col>
+						</Row>
 						<div className="d-flex justify-content-between align-items-center mt-3">
 							<strong>Total: {money(cartTotal)}</strong>
 							<Button variant="primary" size="lg" onClick={sendOrder} disabled={sending || cart.length === 0}>
-								{sending ? 'Enviando…' : 'Enviar a cocina'}
+								{sending ? 'Enviando…' : 'Enviar comanda'}
 							</Button>
 						</div>
 					</Card.Body>
@@ -598,7 +783,7 @@ const CuentaDetail = () => {
 								<tbody>
 									{payments.map((p) => (
 										<tr key={p.id}>
-											<td>{new Date(p.date).toLocaleString("es-GT")}</td>
+											<td>{fmtDateTime(p.date)}</td>
 											<td>{paymentLabel(p.paymentMethod)}</td>
 											<td className="text-end font-w600">{money(p.amount)}</td>
 											<td className="text-end" style={{ width: 90 }}>
@@ -622,7 +807,7 @@ const CuentaDetail = () => {
 						<ul className="list-unstyled mb-0">
 							{logs.map((l) => (
 								<li key={l.id} className="d-flex align-items-start border-bottom py-2 flex-wrap">
-									<span className="text-muted small me-3" style={{ minWidth: 140 }}>{new Date(l.createdAt).toLocaleString("es-GT")}</span>
+									<span className="text-muted small me-3" style={{ minWidth: 140 }}>{fmtDateTime(l.createdAt)}</span>
 									<span className="me-2 font-w600">{AUDIT_ACTIONS[l.action] || l.action}</span>
 									<span className="text-muted small">{l.userName ? `· ${l.userName} (${ROLE_LABELS[l.userRole] || l.userRole})` : ""}{l.detail ? ` · ${l.detail}` : ""}</span>
 								</li>
@@ -633,14 +818,26 @@ const CuentaDetail = () => {
 			</Card>
 
 			{/* Modal cobrar */}
-			<Modal show={showPay} onHide={() => setShowPay(false)} centered>
+			<Modal show={showPay} onHide={() => setShowPay(false)} centered backdrop="static" keyboard={false}>
 				<Modal.Header closeButton><Modal.Title>Cobrar cuenta</Modal.Title></Modal.Header>
 				<Modal.Body>
+					{isDelivery && (
+						<Form.Group className="mb-3 border rounded p-2 bg-light">
+							<Form.Label className="mb-1"><i className="fa-solid fa-motorcycle me-1"></i>Efectivo al motorista (Q)</Form.Label>
+							<Form.Control type="number" step="0.01" min={0} placeholder="0.00" value={payFee} onChange={(e) => changePayFee(e.target.value)} />
+							<Form.Text className="text-muted">Se le cobra al cliente junto con los productos. Al entregar, sale en efectivo de caja para el motorista.</Form.Text>
+						</Form.Group>
+					)}
+					{isDelivery && (
+						<div className="d-flex justify-content-between mb-1 small text-muted">
+							<span>Productos {money(Number(account.total) - discount)} + envío {money(Number(payFee) || 0)}</span>
+						</div>
+					)}
 					<div className="d-flex justify-content-between mb-2">
-						<span>Neto a pagar</span><strong>{money(net)}</strong>
+						<span>Neto a pagar</span><strong>{money(isDelivery ? netWithFee(payFee) : net)}</strong>
 					</div>
 					<div className="d-flex justify-content-between mb-3">
-						<span>Saldo pendiente</span><strong className="text-danger">{money(remaining)}</strong>
+						<span>Saldo pendiente</span><strong className="text-danger">{money(isDelivery ? Math.max(netWithFee(payFee) - paid, 0) : remaining)}</strong>
 					</div>
 					<Form.Group className="mb-3">
 						<Form.Label>Monto a pagar</Form.Label>
@@ -693,7 +890,7 @@ const CuentaDetail = () => {
 			</Modal>
 
 			{/* Modal: cobro por producto (división de cuenta) */}
-			<Modal show={showPayItems} onHide={() => setShowPayItems(false)} centered>
+			<Modal show={showPayItems} onHide={() => setShowPayItems(false)} centered backdrop="static" keyboard={false}>
 				<Modal.Header closeButton><Modal.Title>Cobrar productos</Modal.Title></Modal.Header>
 				<Modal.Body>
 					<p className="text-muted">Seleccione los productos que se van a pagar.</p>
@@ -731,7 +928,7 @@ const CuentaDetail = () => {
 			</Modal>
 
 			{/* Modal: elegir opciones (aderezos) en cuadrícula */}
-			<Modal show={showConfig} onHide={() => setShowConfig(false)} centered size="lg">
+			<Modal show={showConfig} onHide={() => setShowConfig(false)} centered size="lg" backdrop="static" keyboard={false}>
 				<Modal.Header closeButton>
 					<Modal.Title>{configItem?.name}</Modal.Title>
 				</Modal.Header>
@@ -748,25 +945,37 @@ const CuentaDetail = () => {
 					)}
 					{configItem && choiceGroups(configItem).map((g) => {
 						const total = groupTotal(g.label);
-						const full = total >= choose(g);
+						const target = groupTarget(g);
+						const dist = !!g.distribute;
+						const full = total >= target;
+						const dCount = distinctCount(g.label);
+						const maxOpt = maxOptions(g);
+						const step = stepOf(g);
 						return (
 							<div className="mb-3" key={g.label}>
 								<div className="d-flex justify-content-between align-items-center mb-2">
 									<strong style={{ fontSize: "1.1rem" }}>{g.label}</strong>
-									<span className={`fw-bold ${total === choose(g) ? "text-success" : "text-danger"}`} style={{ fontSize: "1.1rem" }}>
-										Elegidos {total}/{choose(g)}
+									<span className={`fw-bold ${total === target ? "text-success" : "text-danger"}`} style={{ fontSize: "1.1rem" }}>
+										{dist ? `Repartidas ${total}/${target}` : `Elegidos ${total}/${target}`}
 									</span>
 								</div>
+								{dist && (
+									<div className="small text-muted mb-2">
+										Elige hasta {maxOpt} sabor{maxOpt > 1 ? 'es' : ''}; se reparten parejo y se ajustan de {step} en {step} con - / +.
+									</div>
+								)}
 								<Row className="g-2">
 									{g.optionItemIds.map((oid) => {
 										const p = optProduct(oid);
 										const count = (configChoices[g.label] || {})[oid] || 0;
+										const selected = count > 0;
+										const canSelect = dist ? (selected || dCount < maxOpt) : !full;
 										return (
 											<Col xs={6} md={4} key={oid}>
 												<Card
-													className={`h-100 ${count > 0 ? "border-success border-2" : ""}`}
-													style={{ cursor: full && count === 0 ? "not-allowed" : "pointer", opacity: full && count === 0 ? 0.5 : 1 }}
-													onClick={() => { if (!full) incChoice(g.label, oid); }}
+													className={`h-100 ${selected ? "border-success border-2" : ""}`}
+													style={{ cursor: canSelect ? "pointer" : "not-allowed", opacity: canSelect ? 1 : 0.5 }}
+													onClick={() => { if (!canSelect) return; if (dist) toggleFlavor(g, oid); else incChoice(g.label, oid); }}
 													title="Toque para elegir"
 												>
 													{p?.image ? (
@@ -776,10 +985,17 @@ const CuentaDetail = () => {
 													)}
 													<Card.Body className="p-2 text-center">
 														<div className="small font-w600">{productName(oid)}</div>
-														{count > 0 && (
-															<div className="d-flex justify-content-center align-items-center gap-2 mt-1">
-																<Button size="sm" variant="light" className="py-0 px-2" onClick={(e) => { e.stopPropagation(); decChoice(g.label, oid); }}>-</Button>
-																<Badge bg="success">{count}</Badge>
+														{selected && dist && (
+															<div className="d-flex justify-content-center align-items-center gap-2 mt-2" onClick={(e) => e.stopPropagation()}>
+																<Button variant="outline-danger" onClick={() => addN(g.label, oid, -step)} style={{ fontSize: '1.1rem', padding: '0 12px' }}>-</Button>
+																<Badge bg="success" style={{ fontSize: '1.05rem', minWidth: 30 }}>{count}</Badge>
+																<Button variant="success" disabled={total + step > target} onClick={() => { if (total + step <= target) addN(g.label, oid, step); }} style={{ fontSize: '1.1rem', padding: '0 12px' }}>+</Button>
+															</div>
+														)}
+														{selected && !dist && (
+															<div className="d-flex justify-content-center align-items-center gap-2 mt-2" onClick={(e) => e.stopPropagation()}>
+																<Button variant="outline-danger" onClick={() => decChoice(g.label, oid)} style={{ fontSize: '0.95rem', padding: '4px 12px' }}>Quitar</Button>
+																<Badge bg="success" style={{ fontSize: '1.05rem', minWidth: 30 }}>{count}</Badge>
 															</div>
 														)}
 													</Card.Body>
@@ -799,9 +1015,12 @@ const CuentaDetail = () => {
 			</Modal>
 
 			{/* Modal descuento */}
-			<Modal show={showDiscount} onHide={() => setShowDiscount(false)} centered>
-				<Modal.Header closeButton><Modal.Title>Descuento</Modal.Title></Modal.Header>
+			<Modal show={showDiscount} onHide={() => setShowDiscount(false)} centered backdrop="static" keyboard={false}>
+				<Modal.Header closeButton><Modal.Title>{isAdmin ? 'Descuento' : 'Solicitar descuento'}</Modal.Title></Modal.Header>
 				<Modal.Body>
+					{!isAdmin && (
+						<p className="text-muted small">El descuento quedará pendiente hasta que el administrador lo autorice.</p>
+					)}
 					<div className="d-flex justify-content-between mb-3">
 						<span>Total de la cuenta</span><strong>{money(account.total)}</strong>
 					</div>
@@ -817,12 +1036,12 @@ const CuentaDetail = () => {
 				</Modal.Body>
 				<Modal.Footer>
 					<Button variant="light" onClick={() => setShowDiscount(false)}>Cancelar</Button>
-					<Button variant="primary" onClick={submitDiscount}>Aplicar</Button>
+					<Button variant="primary" onClick={submitDiscount}>{isAdmin ? 'Aplicar' : 'Solicitar'}</Button>
 				</Modal.Footer>
 			</Modal>
 
 			{/* Modal unir mesas */}
-			<Modal show={showJoin} onHide={() => setShowJoin(false)} centered>
+			<Modal show={showJoin} onHide={() => setShowJoin(false)} centered backdrop="static" keyboard={false}>
 				<Modal.Header closeButton><Modal.Title>Unir mesas a la cuenta</Modal.Title></Modal.Header>
 				<Modal.Body>
 					<Row className="g-2">

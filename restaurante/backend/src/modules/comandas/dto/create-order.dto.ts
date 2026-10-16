@@ -48,6 +48,18 @@ export class CreateOrderDto {
   @MaxLength(255)
   notes?: string;
 
+  /** Nota para cocina (platillos). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  notesCocina?: string;
+
+  /** Nota para barra (bebidas). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  notesBarra?: string;
+
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })

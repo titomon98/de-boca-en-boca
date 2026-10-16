@@ -107,3 +107,46 @@ body[data-primary="color_1"],
 .bg-login .sign-in-your .dlab-sign-up:after {
   display: none;
 }
+
+/* Accesibilidad: letra más grande en todas las casillas de ingreso de datos,
+   para usuarios mayores. Aplica a inputs, selects y textareas de Bootstrap. */
+.form-control,
+.form-select,
+input.form-control,
+textarea.form-control {
+  font-size: 1.05rem;
+  padding-top: 0.4rem;
+  padding-bottom: 0.4rem;
+}
+.form-label {
+  font-size: 1rem;
+}
+/* El modal (cobro, opciones, grupos) también con casillas un poco más grandes. */
+.modal-body .form-control,
+.modal-body .form-select {
+  font-size: 1.05rem;
+}
+
+/* Sidebar contraída: al pasar el mouse sobre un ícono, mostrar el nombre del
+   menú como etiqueta flotante (en vez del recuadro vacío de la plantilla). */
+[data-sidebar-style="full"][data-layout="vertical"] .menu-toggle .dlabnav .metismenu > li {
+  position: relative;
+}
+[data-sidebar-style="full"][data-layout="vertical"] .menu-toggle .dlabnav .metismenu > li:hover > a .nav-text {
+  display: block;
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-left: 0.5rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 0.375rem;
+  background: #1A1A1A;
+  color: #FFFFFF;
+  font-size: 0.875rem;
+  font-weight: 600;
+  white-space: nowrap;
+  z-index: 1000;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}

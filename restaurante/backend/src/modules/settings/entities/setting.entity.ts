@@ -8,6 +8,6 @@ export class Setting {
   @Column({ type: 'varchar', length: 255, nullable: true })
   value: string | null;
 
-  @UpdateDateColumn({ name: 'updated_at', type: 'timestamp' })
+  @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
   updatedAt: Date;
 }

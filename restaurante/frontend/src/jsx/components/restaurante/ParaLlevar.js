@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Card, Row, Col, Modal, Button, Form, Badge, Spinner } from 'react-bootstrap';
 import swal from 'sweetalert';
 import { TablesApi, AccountsApi } from '../../../services/RestaurantApi';
-import { money } from '../../../services/helpers';
+import { money, fmtTime } from '../../../services/helpers';
 
 /**
  * Órdenes "Para llevar". Reutiliza cuentas/comandas pero sin selección de mesa.
@@ -45,7 +45,7 @@ const ParaLlevar = () => {
 		}
 		setSaving(true);
 		try {
-			const finalLabel = label.trim() || `Para llevar ${new Date().toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' })}`;
+			const finalLabel = label.trim() || `Para llevar ${fmtTime()}`;
 			const acc = await AccountsApi.open({ label: finalLabel, tableIds: [takeoutId] });
 			setShow(false);
 			navigate(`/cuenta/${acc.id}`);
@@ -146,7 +146,7 @@ const ParaLlevar = () => {
 				</Row>
 			)}
 
-			<Modal show={show} onHide={() => setShow(false)} centered>
+			<Modal show={show} onHide={() => setShow(false)} centered backdrop="static" keyboard={false}>
 				<Modal.Header closeButton>
 					<Modal.Title>Nueva orden para llevar</Modal.Title>
 				</Modal.Header>

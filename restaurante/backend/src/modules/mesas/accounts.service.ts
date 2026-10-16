@@ -97,11 +97,32 @@ export class AccountsService {
     user: AuthUser,
   ): Promise<Account> {
     const account = await this.findOne(accountId);
+    const newFee = isDelivery ? round2(Number(courierFee) || 0) : 0;
     if (account.status === 'paid' || account.status === 'cancelled') {
-      throw new BadRequestException('La cuenta ya está cerrada');
+      // Sin cambio real (mismo envío): no es error, nada que hacer.
+      if (!!account.isDelivery === !!isDelivery && round2(Number(account.courierFee || 0)) === newFee) {
+        return account;
+      }
+      throw new BadRequestException(
+        'La cuenta ya está cobrada: el efectivo del motorista se ingresa al cobrar. Para cambiarlo, anule el cobro en "Cobros" y vuelva a cobrar.',
+      );
+    }
+    // El envío se le cobra al cliente: no puede quedar por debajo de lo ya pagado.
+    const paidRow = await this.dataSource
+      .getRepository(Payment)
+      .createQueryBuilder('p')
+      .select('COALESCE(SUM(p.amount),0)', 'paid')
+      .where('p.accountId = :id', { id: accountId })
+      .getRawOne<{ paid: string }>();
+    const paid = round2(Number(paidRow?.paid || 0));
+    const newNet = round2(Number(account.total) - Number(account.discount || 0) + newFee);
+    if (paid > newNet + 0.001) {
+      throw new BadRequestException(
+        `Ya se pagaron Q${paid.toFixed(2)}; el total con ese envío sería Q${newNet.toFixed(2)}.`,
+      );
     }
     account.isDelivery = !!isDelivery;
-    account.courierFee = isDelivery ? round2(Number(courierFee) || 0) : 0;
+    account.courierFee = newFee;
     await this.accountsRepository.save(account);
     await this.audit.log({
       action: 'envio_marcado',
@@ -250,6 +271,138 @@ export class AccountsService {
       }
     });
     return this.findOne(accountId);
+  }
+
+  /**
+   * Solicita un descuento (cajero/mesero). Queda pendiente hasta que el
+   * administrador lo autorice. Requiere monto y descripción.
+   */
+  async requestDiscount(
+    accountId: number,
+    amount: number,
+    reason: string,
+    user: AuthUser,
+  ): Promise<Account> {
+    const account = await this.findOne(accountId);
+    if (account.status === 'paid' || account.status === 'cancelled') {
+      throw new BadRequestException('La cuenta ya está cerrada');
+    }
+    const discount = round2(Number(amount));
+    if (discount <= 0) throw new BadRequestException('El descuento debe ser mayor a 0');
+    if (discount > Number(account.total)) {
+      throw new BadRequestException('El descuento no puede superar el total de la cuenta');
+    }
+    if (!reason?.trim()) {
+      throw new BadRequestException('El descuento requiere una descripción');
+    }
+    await this.accountsRepository.update(accountId, {
+      discountRequest: discount,
+      discountRequestReason: reason.trim(),
+      discountRequestBy: user.name || `#${user.id}`,
+    });
+    await this.audit.log({
+      action: 'descuento_solicitado',
+      user,
+      accountId,
+      detail: `Q${discount.toFixed(2)} - ${reason.trim()}`,
+    });
+    return this.findOne(accountId);
+  }
+
+  /** El administrador autoriza la solicitud de descuento pendiente. */
+  async approveDiscount(accountId: number, user: AuthUser): Promise<Account> {
+    const account = await this.findOne(accountId);
+    if (account.discountRequest == null) {
+      throw new BadRequestException('No hay una solicitud de descuento pendiente');
+    }
+    const amount = round2(Number(account.discountRequest));
+    const reason = account.discountRequestReason || 'Descuento autorizado';
+    const requestedBy = account.discountRequestBy || '';
+    await this.accountsRepository.update(accountId, {
+      discountRequest: null,
+      discountRequestReason: null,
+      discountRequestBy: null,
+    });
+    await this.setDiscount(accountId, amount, reason, user);
+    await this.audit.log({
+      action: 'descuento_autorizado',
+      user,
+      accountId,
+      detail: `Q${amount.toFixed(2)} (solicitado por ${requestedBy})`,
+    });
+    return this.findOne(accountId);
+  }
+
+  /** El administrador rechaza la solicitud de descuento pendiente. */
+  async rejectDiscount(accountId: number, user: AuthUser): Promise<Account> {
+    const account = await this.findOne(accountId);
+    if (account.discountRequest == null) {
+      throw new BadRequestException('No hay una solicitud de descuento pendiente');
+    }
+    const detail = `Q${Number(account.discountRequest).toFixed(2)} (solicitado por ${account.discountRequestBy || ''})`;
+    await this.accountsRepository.update(accountId, {
+      discountRequest: null,
+      discountRequestReason: null,
+      discountRequestBy: null,
+    });
+    await this.audit.log({ action: 'descuento_rechazado', user, accountId, detail });
+    return this.findOne(accountId);
+  }
+
+  /**
+   * Historial de cuentas (todas, recientes primero) con resumen: total,
+   * descuento, pagado, propina, hora de la primera comanda y del cierre, para
+   * el registro cuenta por cuenta. El detalle completo se ve en /cuenta/:id.
+   */
+  async history(limit = 200): Promise<Array<Record<string, unknown>>> {
+    const accounts = await this.accountsRepository.find({
+      relations: { tables: true },
+      order: { openedAt: 'DESC' },
+      take: limit,
+    });
+    if (accounts.length === 0) return [];
+    const ids = accounts.map((a) => a.id);
+
+    const firstOrders = await this.dataSource
+      .getRepository(Order)
+      .createQueryBuilder('o')
+      .select('o.accountId', 'accountId')
+      .addSelect('MIN(o.createdAt)', 'firstAt')
+      .where('o.accountId IN (:...ids)', { ids })
+      .andWhere('o.status != :c', { c: 'cancelled' })
+      .groupBy('o.accountId')
+      .getRawMany<{ accountId: number; firstAt: Date }>();
+    const firstById = new Map(firstOrders.map((r) => [Number(r.accountId), r.firstAt]));
+
+    const paidRows = await this.dataSource
+      .getRepository(Payment)
+      .createQueryBuilder('p')
+      .select('p.accountId', 'accountId')
+      .addSelect('COALESCE(SUM(p.amount),0)', 'paid')
+      .addSelect('COALESCE(SUM(p.tip),0)', 'tips')
+      .where('p.accountId IN (:...ids)', { ids })
+      .groupBy('p.accountId')
+      .getRawMany<{ accountId: number; paid: string; tips: string }>();
+    const paidById = new Map(paidRows.map((r) => [Number(r.accountId), r]));
+
+    return accounts.map((a) => {
+      const pr = paidById.get(a.id);
+      return {
+        id: a.id,
+        label: a.label,
+        status: a.status,
+        tables: a.tables,
+        total: Number(a.total),
+        discount: Number(a.discount || 0),
+        courierFee: Number(a.courierFee || 0),
+        isDelivery: a.isDelivery,
+        openedAt: a.openedAt,
+        closedAt: a.closedAt,
+        firstOrderAt: firstById.get(a.id) || null,
+        paid: round2(Number(pr?.paid || 0)),
+        tips: round2(Number(pr?.tips || 0)),
+      };
+    });
   }
 
   /** Marca la cuenta como "cobrando" antes de cerrarla. */

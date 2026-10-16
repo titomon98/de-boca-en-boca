@@ -30,7 +30,7 @@ const Usuarios = () => {
 
 	const save = async () => {
 		if (!form.name.trim() || !form.email.trim()) {
-			swal('Atención', 'Nombre y correo son obligatorios.', 'warning');
+			swal('Atención', 'Nombre y usuario son obligatorios.', 'warning');
 			return;
 		}
 		if (!editing && !form.password) {
@@ -58,6 +58,8 @@ const Usuarios = () => {
 			text: u.name,
 			icon: 'warning',
 			buttons: ['Cancelar', 'Eliminar'],
+			closeOnClickOutside: false,
+			closeOnEsc: false,
 			dangerMode: true,
 		}).then(async (ok) => {
 			if (ok) {
@@ -88,7 +90,7 @@ const Usuarios = () => {
 						<thead>
 							<tr>
 								<th>Nombre</th>
-								<th>Correo</th>
+								<th>Usuario o correo</th>
 								<th>Rol</th>
 								<th className="text-end">Acciones</th>
 							</tr>
@@ -114,7 +116,7 @@ const Usuarios = () => {
 				</Card.Body>
 			</Card>
 
-			<Modal show={show} onHide={() => setShow(false)} centered>
+			<Modal show={show} onHide={() => setShow(false)} centered backdrop="static" keyboard={false}>
 				<Modal.Header closeButton>
 					<Modal.Title>{editing ? 'Editar usuario' : 'Nuevo usuario'}</Modal.Title>
 				</Modal.Header>
@@ -124,8 +126,8 @@ const Usuarios = () => {
 						<Form.Control value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
 					</Form.Group>
 					<Form.Group className="mb-3">
-						<Form.Label>Correo</Form.Label>
-						<Form.Control type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+						<Form.Label>Usuario o correo</Form.Label>
+						<Form.Control type="text" autoCapitalize="none" autoCorrect="off" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
 					</Form.Group>
 					<Form.Group className="mb-3">
 						<Form.Label>Contraseña {editing && <small className="text-muted">(dejar en blanco para no cambiar)</small>}</Form.Label>

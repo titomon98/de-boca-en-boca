@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -11,6 +12,7 @@ import {
 import { PosService } from './pos.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PayItemsDto } from './dto/pay-items.dto';
+import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -37,6 +39,24 @@ export class PosController {
   @Roles(Role.ADMINISTRATOR, Role.CASHIER)
   payItems(@Body() dto: PayItemsDto, @CurrentUser() user: AuthUser) {
     return this.posService.payItems(dto, user);
+  }
+
+  /** Cobros registrados en un rango de fechas (para corregir o anular). */
+  @Get('list')
+  @Roles(Role.ADMINISTRATOR, Role.CASHIER)
+  findAll(@Query('from') from?: string, @Query('to') to?: string) {
+    return this.posService.findAll(from, to);
+  }
+
+  /** Corrige un cobro (monto, método o propina). Queda en la bitácora. */
+  @Patch(':id')
+  @Roles(Role.ADMINISTRATOR, Role.CASHIER)
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePaymentDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.posService.update(id, dto, user);
   }
 
   @Get()

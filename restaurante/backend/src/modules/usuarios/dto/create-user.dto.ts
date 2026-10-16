@@ -1,4 +1,4 @@
-import { IsEmail, IsEnum, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsEnum, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { Role } from '../../../common/enums/role.enum';
 
 export class CreateUserDto {
@@ -6,8 +6,11 @@ export class CreateUserDto {
   @MaxLength(150)
   name: string;
 
-  @IsEmail()
+  /** Correo o solo un usuario (sin espacios). */
+  @IsString()
+  @MinLength(3, { message: 'El usuario debe tener al menos 3 caracteres' })
   @MaxLength(150)
+  @Matches(/^\S+$/, { message: 'El usuario no puede llevar espacios' })
   email: string;
 
   @IsString()

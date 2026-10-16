@@ -10,6 +10,7 @@ import { Account } from '../mesas/entities/account.entity';
 import { OrderItem } from '../comandas/entities/order-item.entity';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PayItemsDto } from './dto/pay-items.dto';
+import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { recomputeTableStatus } from '../mesas/table-status.util';
 import { round2 } from '../../common/utils/money';
 import { AuditService } from '../audit/audit.service';
@@ -22,6 +23,15 @@ function methodLabel(method: string): string {
   if (method === 'card') return 'tarjeta';
   if (method === 'transfer') return 'transferencia';
   return method;
+}
+
+/** Neto a pagar de una cuenta: total - descuento + envío (si es domicilio). */
+function netOf(account: Account): number {
+  return round2(
+    Number(account.total) -
+      Number(account.discount || 0) +
+      (account.isDelivery ? Number(account.courierFee || 0) : 0),
+  );
 }
 
 export interface PaymentResult {
@@ -289,7 +299,7 @@ export class PosService {
       if (account) {
         const paidTotal = await this.sumPayments(manager, account.id);
         // Si la cuenta estaba pagada y ya no se cubre el total, reabrir a cobro.
-        if (account.status === 'paid' && paidTotal + 0.001 < Number(account.total)) {
+        if (account.status === 'paid' && paidTotal + 0.001 < netOf(account)) {
           account.status = 'billing';
           account.closedAt = null;
           await manager.save(account);
@@ -309,6 +319,109 @@ export class PosService {
       }
     });
     return { ok: true };
+  }
+
+  /**
+   * Corrige un cobro ya registrado (monto, método o propina). Valida que el
+   * monto no exceda el saldo de la cuenta y recalcula su estado: si con la
+   * corrección queda cubierta se cierra; si deja de cubrirse, se reabre a
+   * "en cobro". Los cobros por producto solo permiten cambiar método/propina
+   * (su monto lo fijan los productos). Queda en la bitácora antes -> después.
+   */
+  async update(
+    paymentId: number,
+    dto: UpdatePaymentDto,
+    user: AuthUser,
+  ): Promise<Payment> {
+    await this.dataSource.transaction(async (manager) => {
+      const payment = await manager.findOne(Payment, { where: { id: paymentId } });
+      if (!payment) throw new NotFoundException('Cobro no encontrado');
+
+      await lockAccount(manager, payment.accountId);
+      const account = await manager.findOne(Account, {
+        where: { id: payment.accountId },
+        relations: { tables: true },
+      });
+      if (!account) throw new NotFoundException('Cuenta no encontrada');
+      if (account.status === 'cancelled') {
+        throw new BadRequestException('La cuenta está anulada');
+      }
+
+      const before = {
+        amount: round2(Number(payment.amount)),
+        method: payment.paymentMethod,
+        tip: round2(Number(payment.tip || 0)),
+      };
+
+      if (dto.amount !== undefined && round2(dto.amount) !== before.amount) {
+        if ((payment.itemIds || []).length > 0) {
+          throw new BadRequestException(
+            'Este cobro fue por productos: su monto no se edita. Anúlelo y vuelva a cobrar.',
+          );
+        }
+        const newAmount = round2(dto.amount);
+        const othersPaid = round2((await this.sumPayments(manager, account.id)) - before.amount);
+        const net = netOf(account);
+        if (othersPaid + newAmount > net + 0.001) {
+          throw new BadRequestException(
+            `El monto excede el saldo: máximo Q${Math.max(round2(net - othersPaid), 0).toFixed(2)}`,
+          );
+        }
+        payment.amount = newAmount;
+      }
+      if (dto.paymentMethod !== undefined) payment.paymentMethod = dto.paymentMethod;
+      if (dto.tip !== undefined) payment.tip = round2(dto.tip);
+      await manager.save(payment);
+
+      // Recalcular estado de la cuenta.
+      const paidTotal = await this.sumPayments(manager, account.id);
+      const net = netOf(account);
+      if (paidTotal + 0.001 >= net && account.status !== 'paid') {
+        account.status = 'paid';
+        account.closedAt = new Date();
+        await manager.save(account);
+        for (const table of account.tables) await recomputeTableStatus(manager, table.id);
+      } else if (paidTotal + 0.001 < net && account.status === 'paid') {
+        account.status = 'billing';
+        account.closedAt = null;
+        await manager.save(account);
+        for (const table of account.tables) await recomputeTableStatus(manager, table.id);
+      }
+
+      await this.audit.log(
+        {
+          action: 'cobro_editado',
+          user,
+          accountId: account.id,
+          detail:
+            `Cobro #${payment.id}: Q${before.amount.toFixed(2)} (${methodLabel(before.method)}) -> ` +
+            `Q${round2(Number(payment.amount)).toFixed(2)} (${methodLabel(payment.paymentMethod)})` +
+            (before.tip !== round2(Number(payment.tip || 0))
+              ? `, propina Q${before.tip.toFixed(2)} -> Q${round2(Number(payment.tip || 0)).toFixed(2)}`
+              : ''),
+        },
+        manager,
+      );
+    });
+    const updated = await this.paymentsRepository.findOne({ where: { id: paymentId } });
+    if (!updated) throw new NotFoundException('Cobro no encontrado');
+    return updated;
+  }
+
+  /** Cobros registrados en un rango de días (hora de Guatemala), recientes primero. */
+  findAll(from?: string, to?: string): Promise<Payment[]> {
+    return this.paymentsRepository
+      .createQueryBuilder('payment')
+      .leftJoinAndSelect('payment.account', 'account')
+      .leftJoinAndSelect('account.tables', 'tables')
+      .leftJoinAndSelect('payment.user', 'user')
+      .where(
+        "CAST(payment.date AT TIME ZONE 'America/Guatemala' AS DATE) BETWEEN :from AND :to",
+        { from: from || '1970-01-01', to: to || '2999-12-31' },
+      )
+      .orderBy('payment.date', 'DESC')
+      .take(500)
+      .getMany();
   }
 
   findByAccount(accountId: number): Promise<Payment[]> {

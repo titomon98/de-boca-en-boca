@@ -1,10 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { MoreThan, Repository } from 'typeorm';
 import { CashClosing } from './entities/cash-closing.entity';
 import { Payment } from '../pos/entities/payment.entity';
 import { CreateCashClosingDto } from './dto/create-cash-closing.dto';
+import { UpdateCashClosingDto } from './dto/update-cash-closing.dto';
 import { round2 } from '../../common/utils/money';
+import { AuditService } from '../audit/audit.service';
+import { AuthUser } from '../../common/decorators/current-user.decorator';
 
 /** Métodos de pago que se contabilizan como efectivo / tarjeta / transferencia. */
 const CASH_METHODS = ['cash', 'efectivo'];
@@ -31,6 +34,7 @@ export class CashService {
     private readonly closingsRepository: Repository<CashClosing>,
     @InjectRepository(Payment)
     private readonly paymentsRepository: Repository<Payment>,
+    private readonly audit: AuditService,
   ) {}
 
   /** Fecha del último cierre (o null si no hay ninguno). */
@@ -79,14 +83,15 @@ export class CashService {
     const totalTips = tipCash + tipCard + tipTransfer + tipOther;
     const totalSales = salesCash + salesCard + salesTransfer + salesOther;
 
-    // Efectivo entregado a motoristas (sale de caja) en envíos pagados del período.
+    // Efectivo entregado a motoristas (sale de caja) en envíos ENTREGADOS del
+    // período: el efectivo sale al entregar la orden, no al cobrarla.
     const accountsRepo = this.paymentsRepository.manager.getRepository('Account');
     const courierQb = accountsRepo
       .createQueryBuilder('a')
       .select('COALESCE(SUM(a.courier_fee), 0)', 'sum')
       .where('a.is_delivery = true')
-      .andWhere("a.status = 'paid'");
-    if (since) courierQb.andWhere('a.closed_at > :since', { since });
+      .andWhere('a.delivered_at IS NOT NULL');
+    if (since) courierQb.andWhere('a.delivered_at > :since', { since });
     const courierRow = await courierQb.getRawOne<{ sum: string }>();
     const courierCash = round2(Number(courierRow?.sum || 0));
 
@@ -140,5 +145,48 @@ export class CashService {
       order: { date: 'DESC' },
       take: 100,
     });
+  }
+
+  /**
+   * Edita un cierre (solo el conteo y la nota) y recalcula la diferencia contra
+   * el efectivo esperado. Queda registrado en la bitácora quién y qué cambió.
+   */
+  async update(
+    id: number,
+    dto: UpdateCashClosingDto,
+    user: AuthUser,
+  ): Promise<CashClosing> {
+    const closing = await this.closingsRepository.findOne({ where: { id } });
+    if (!closing) throw new NotFoundException('Cierre no encontrado');
+
+    const before = {
+      countedCash: closing.countedCash,
+      countedCard: closing.countedCard,
+      countedTransfer: closing.countedTransfer,
+      notes: closing.notes,
+    };
+
+    if (dto.countedCash !== undefined) closing.countedCash = round2(dto.countedCash);
+    if (dto.countedCard !== undefined) closing.countedCard = round2(dto.countedCard);
+    if (dto.countedTransfer !== undefined) closing.countedTransfer = round2(dto.countedTransfer);
+    if (dto.notes !== undefined) closing.notes = dto.notes || null;
+
+    // Diferencia vs. efectivo esperado (cobrado en efectivo - salidas a motoristas).
+    const expectedCash = round2(Number(closing.totalCash) - Number(closing.courierCash || 0));
+    closing.difference =
+      closing.countedCash != null ? round2(Number(closing.countedCash) - expectedCash) : 0;
+
+    const saved = await this.closingsRepository.save(closing);
+
+    await this.audit.log({
+      action: 'cierre_editado',
+      user,
+      detail:
+        `Cierre #${id}. Contado efectivo ${before.countedCash ?? '-'} -> ${saved.countedCash ?? '-'}, ` +
+        `tarjeta ${before.countedCard ?? '-'} -> ${saved.countedCard ?? '-'}, ` +
+        `transfer ${before.countedTransfer ?? '-'} -> ${saved.countedTransfer ?? '-'}`,
+    });
+
+    return saved;
   }
 }

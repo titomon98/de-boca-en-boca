@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS restaurante.users (
   email VARCHAR(150) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
   role VARCHAR(30) NOT NULL CHECK (role IN ('administrator','waiter','cashier','kitchen')),
-  created_at TIMESTAMP NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Mesas físicas del salón. Maqueta inicial: 15 mesas (ver seed).
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS restaurante.tables (
   capacity INTEGER NOT NULL DEFAULT 4,
   status VARCHAR(20) NOT NULL DEFAULT 'free' CHECK (status IN ('free','occupied','billing')),
   is_takeout BOOLEAN NOT NULL DEFAULT false,
-  created_at TIMESTAMP NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- is_takeout: mesa virtual "Para llevar". Admite varias órdenes en paralelo y
 -- nunca se ocupa. ALTER idempotente + una sola fila garantizada (número 0).
@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS restaurante.menu_items (
   type VARCHAR(20) NOT NULL DEFAULT 'food' CHECK (type IN ('food','drink')),
   available BOOLEAN NOT NULL DEFAULT true,
   image TEXT,
-  created_at TIMESTAMP NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- image: foto del platillo en base64 (data URL). ALTER idempotente:
 ALTER TABLE restaurante.menu_items ADD COLUMN IF NOT EXISTS image TEXT;
@@ -78,6 +78,10 @@ ALTER TABLE restaurante.menu_items ADD COLUMN IF NOT EXISTS combo JSONB;
 -- en reportes/inventario (los aderezos también se venden por aparte):
 -- [ { "label": "Aderezo", "choose": 2, "optionItemIds": [20,21,22,23] } ].
 ALTER TABLE restaurante.menu_items ADD COLUMN IF NOT EXISTS choice_groups JSONB;
+-- grupo: agrupación visual del menú táctil. Productos con el mismo valor se
+-- muestran como una sola tarjeta (ej. "Cervezas") y al tocarla se elige la
+-- variante. No afecta precio ni analítica. ALTER idempotente:
+ALTER TABLE restaurante.menu_items ADD COLUMN IF NOT EXISTS grupo VARCHAR(60);
 
 -- Cuenta (comanda de cobro). Una cuenta puede abarcar VARIAS mesas (unión)
 -- y una misma mesa puede tener VARIAS cuentas abiertas (cuentas separadas).
@@ -88,16 +92,21 @@ CREATE TABLE IF NOT EXISTS restaurante.accounts (
   status VARCHAR(20) NOT NULL DEFAULT 'open' CHECK (status IN ('open','billing','paid','cancelled')),
   waiter_id INTEGER REFERENCES restaurante.users(id),
   total NUMERIC(12,2) NOT NULL DEFAULT 0,
-  opened_at TIMESTAMP NOT NULL DEFAULT now(),
-  closed_at TIMESTAMP
+  opened_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  closed_at TIMESTAMPTZ
 );
 -- delivered_at: entrega (para llevar). Independiente del cobro: una orden puede
 -- estar entregada sin cobrar, o cobrada sin entregar. NULL = pendiente de entrega.
-ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMP;
+ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
 -- Descuento a criterio del mesero (con descripción obligatoria). Reduce el neto
 -- a pagar (neto = total - discount). Queda registrado en la bitácora.
 ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS discount NUMERIC(12,2) NOT NULL DEFAULT 0;
 ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS discount_reason VARCHAR(255);
+-- Solicitud de descuento pendiente de autorización (cajero/mesero la piden, el
+-- administrador la autoriza). Al autorizar pasa a discount/discount_reason.
+ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS discount_request NUMERIC(12,2);
+ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS discount_request_reason VARCHAR(255);
+ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS discount_request_by VARCHAR(150);
 -- Envío a domicilio: courier_fee es el efectivo que sale de CAJA para el motorista.
 -- Sirve para cuadrar la caja (sobre todo si el cliente pagó por transferencia).
 ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS is_delivery BOOLEAN NOT NULL DEFAULT false;
@@ -119,8 +128,8 @@ CREATE TABLE IF NOT EXISTS restaurante.orders (
   status VARCHAR(20) NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending','in_preparation','ready','delivered','cancelled')),
   notes VARCHAR(255),
-  created_at TIMESTAMP NOT NULL DEFAULT now(),
-  updated_at TIMESTAMP NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- cook_id: cocinero que atendió la comanda (se registra al pasarla a preparación/lista).
 -- ALTER idempotente para bases ya existentes:
@@ -152,7 +161,7 @@ CREATE TABLE IF NOT EXISTS restaurante.payments (
   user_id INTEGER NOT NULL REFERENCES restaurante.users(id),
   amount NUMERIC(12,2) NOT NULL,
   payment_method VARCHAR(30) NOT NULL,
-  date TIMESTAMP NOT NULL DEFAULT now()
+  date TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- item_ids: si el pago fue "por producto", los renglones que cubrió (para poder
 -- revertir el estado pagado al anular el cobro). NULL = abono por monto.
@@ -172,7 +181,7 @@ CREATE TABLE IF NOT EXISTS restaurante.audit_logs (
   user_role VARCHAR(30),
   action VARCHAR(50) NOT NULL,
   detail VARCHAR(255),
-  created_at TIMESTAMP NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_restaurante_audit_account ON restaurante.audit_logs(account_id);
 CREATE INDEX IF NOT EXISTS idx_restaurante_audit_order ON restaurante.audit_logs(order_id);
@@ -181,7 +190,7 @@ CREATE INDEX IF NOT EXISTS idx_restaurante_audit_order ON restaurante.audit_logs
 CREATE TABLE IF NOT EXISTS restaurante.settings (
   key VARCHAR(60) PRIMARY KEY,
   value VARCHAR(255),
-  updated_at TIMESTAMP NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 INSERT INTO restaurante.settings (key, value)
   VALUES ('print_comandas', 'false')
@@ -191,7 +200,7 @@ INSERT INTO restaurante.settings (key, value)
 CREATE TABLE IF NOT EXISTS restaurante.cash_closings (
   id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES restaurante.users(id),
-  date TIMESTAMP NOT NULL DEFAULT now(),
+  date TIMESTAMPTZ NOT NULL DEFAULT now(),
   total_sales NUMERIC(12,2) NOT NULL,
   total_cash NUMERIC(12,2) NOT NULL,
   total_card NUMERIC(12,2) NOT NULL,
@@ -245,7 +254,7 @@ CREATE TABLE IF NOT EXISTS restaurante.venues (
   name VARCHAR(80) NOT NULL,
   type VARCHAR(20) NOT NULL DEFAULT 'restaurant' CHECK (type IN ('restaurant','foodtruck')),
   active BOOLEAN NOT NULL DEFAULT true,
-  created_at TIMESTAMP NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- Sede inicial (el restaurante). Idempotente.
 INSERT INTO restaurante.venues (name, type)
@@ -261,3 +270,21 @@ UPDATE restaurante.accounts SET venue_id = (SELECT MIN(id) FROM restaurante.venu
 ALTER TABLE restaurante.cash_closings ADD COLUMN IF NOT EXISTS counted_cash NUMERIC(12,2);
 ALTER TABLE restaurante.cash_closings ADD COLUMN IF NOT EXISTS counted_card NUMERIC(12,2);
 ALTER TABLE restaurante.cash_closings ADD COLUMN IF NOT EXISTS counted_transfer NUMERIC(12,2);
+
+-- === Zona horaria: pasar cualquier columna de fecha que siga siendo 'timestamp
+-- without time zone' a 'timestamptz' (instante absoluto). Lo guardado por el
+-- servidor (UTC) se interpreta como UTC. Idempotente: solo toca las que faltan.
+DO $$
+DECLARE r RECORD;
+BEGIN
+  FOR r IN
+    SELECT table_name, column_name
+      FROM information_schema.columns
+     WHERE table_schema = 'restaurante'
+       AND data_type = 'timestamp without time zone'
+  LOOP
+    EXECUTE format(
+      'ALTER TABLE restaurante.%I ALTER COLUMN %I TYPE TIMESTAMPTZ USING %I AT TIME ZONE ''UTC''',
+      r.table_name, r.column_name, r.column_name);
+  END LOOP;
+END $$;

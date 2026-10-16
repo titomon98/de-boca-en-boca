@@ -5,13 +5,22 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { ReportsApi, MenuApi } from '../../../services/RestaurantApi';
-import { money, paymentLabel } from '../../../services/helpers';
+import { money, paymentLabel, fmtDateTime } from '../../../services/helpers';
 import logo from '../../../images/logo-dbeb.jpg';
+
+/** Formatea una fecha yyyy-mm-dd a dd/mm/yyyy (para reportes). */
+const fmtDay = (s) => {
+	if (!s) return s;
+	const [y, m, d] = String(s).slice(0, 10).split('-');
+	return y && m && d ? `${d}/${m}/${y}` : s;
+};
 
 const methodLabel = paymentLabel;
 
 // Marca de tiempo para nombres de archivo (evita duplicados): 2026-09-24_14-30-05
-const fileStamp = () => new Date().toISOString().slice(0, 19).replace('T', '_').replace(/:/g, '-');
+// Timestamp del nombre de archivo en hora de Guatemala (sv-SE da YYYY-MM-DD HH:MM:SS).
+const fileStamp = () =>
+	new Date().toLocaleString('sv-SE', { timeZone: 'America/Guatemala' }).replace(' ', '_').replace(/:/g, '-');
 
 // Convierte una URL de imagen a data URL para incrustarla en el PDF.
 const toDataURL = (url) =>
@@ -33,25 +42,31 @@ const Reportes = () => {
 	const [categories, setCategories] = useState([]);
 	const [categoryId, setCategoryId] = useState('');
 	const [comboFilter, setComboFilter] = useState('all'); // all | combos | no
+	const [catRanking, setCatRanking] = useState([]);
+	const [byType, setByType] = useState([]);
 
 	const load = useCallback(async () => {
 		setLoading(true);
-		const [s, d, t, cats] = await Promise.all([
+		const [s, d, t, cats, cr, bt] = await Promise.all([
 			ReportsApi.salesSummary(from || undefined, to || undefined),
 			ReportsApi.salesByDay(from || undefined, to || undefined),
 			ReportsApi.topItems(from || undefined, to || undefined, 15, categoryId || undefined, comboFilter),
 			MenuApi.categories(),
+			ReportsApi.categoryRanking(from || undefined, to || undefined),
+			ReportsApi.salesByType(from || undefined, to || undefined),
 		]);
 		setSummary(s);
 		setByDay(d);
 		setTop(t);
 		setCategories(cats);
+		setCatRanking(cr);
+		setByType(bt);
 		setLoading(false);
 	}, [from, to, categoryId, comboFilter]);
 
 	useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-	const rangeLabel = `${from || 'inicio'} a ${to || 'hoy'}`;
+	const rangeLabel = `${from ? fmtDay(from) : 'inicio'} a ${to ? fmtDay(to) : 'hoy'}`;
 
 	// Encabezado de tablas en amarillo de marca con texto negro.
 	const headStyles = { fillColor: [245, 197, 24], textColor: [26, 26, 26] };
@@ -72,9 +87,10 @@ const Reportes = () => {
 		doc.text(`Rango: ${rangeLabel}`, 14, 25);
 		doc.text(`Categoria: ${categoryLabel}   Combos: ${comboLabel}`, 14, 31);
 		doc.text(`Ventas totales: ${money(summary.total)}   Cobros: ${summary.paymentsCount}   Propinas: ${money(summary.tips || 0)}`, 14, 37);
+		doc.text(`Generado: ${fmtDateTime(new Date())}`, 14, 43);
 
 		autoTable(doc, {
-			startY: 44,
+			startY: 50,
 			head: [['Forma de pago', 'Cobros', 'Total']],
 			body: Object.entries(summary.byPaymentMethod || {}).map(([k, v]) => [
 				methodLabel(k), v.count, money(v.total),
@@ -84,7 +100,7 @@ const Reportes = () => {
 		autoTable(doc, {
 			startY: (doc.lastAutoTable?.finalY || 38) + 8,
 			head: [['Día', 'Cobros', 'Total']],
-			body: byDay.map((d) => [d.day, d.count, money(d.total)]),
+			body: byDay.map((d) => [fmtDay(d.day), d.count, money(d.total)]),
 			headStyles,
 		});
 		autoTable(doc, {
@@ -116,7 +132,7 @@ const Reportes = () => {
 		XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(resumen), 'Resumen');
 		XLSX.utils.book_append_sheet(
 			wb,
-			XLSX.utils.json_to_sheet(byDay.map((d) => ({ Día: d.day, Cobros: d.count, Total: Number(d.total) }))),
+			XLSX.utils.json_to_sheet(byDay.map((d) => ({ Día: fmtDay(d.day), Cobros: d.count, Total: Number(d.total) }))),
 			'Ventas por día',
 		);
 		XLSX.utils.book_append_sheet(
@@ -134,7 +150,7 @@ const Reportes = () => {
 			dataLabels: { enabled: false },
 			stroke: { curve: 'smooth', width: 2 },
 			colors: ['#F5C518'],
-			xaxis: { categories: byDay.map((d) => d.day) },
+			xaxis: { categories: byDay.map((d) => fmtDay(d.day)) },
 			yaxis: { labels: { formatter: (v) => `Q${v.toFixed(0)}` } },
 		},
 	};
@@ -280,6 +296,50 @@ const Reportes = () => {
 									))}
 								</tbody>
 							</Table>
+						</Card.Body>
+					</Card>
+
+					<Card>
+						<Card.Header><Card.Title>Ventas por tipo de orden</Card.Title></Card.Header>
+						<Card.Body>
+							{byType.length === 0 ? (
+								<p className="text-muted mb-0">Sin datos en el rango.</p>
+							) : (
+								<Table responsive hover>
+									<thead><tr><th>Tipo</th><th className="text-end">Cobros</th><th className="text-end">Total</th></tr></thead>
+									<tbody>
+										{byType.map((r) => (
+											<tr key={r.type}><td>{r.type}</td><td className="text-end">{r.count}</td><td className="text-end font-w600">{money(r.total)}</td></tr>
+										))}
+									</tbody>
+								</Table>
+							)}
+						</Card.Body>
+					</Card>
+
+					<Card>
+						<Card.Header><Card.Title>Más vendidos por categoría</Card.Title></Card.Header>
+						<Card.Body>
+							{catRanking.length === 0 ? (
+								<p className="text-muted mb-0">Sin datos en el rango.</p>
+							) : (
+								<Row className="g-3">
+									{catRanking.map((cat) => (
+										<Col lg={4} md={6} key={cat.category}>
+											<div className="border rounded h-100 p-2">
+												<div className="fw-bold mb-2">{cat.category}</div>
+												<Table size="sm" className="mb-0">
+													<tbody>
+														{cat.items.map((it, i) => (
+															<tr key={i}><td className="text-muted" style={{ width: 24 }}>{i + 1}</td><td>{it.menuItemName}</td><td className="text-end font-w600">{it.quantity}</td></tr>
+														))}
+													</tbody>
+												</Table>
+											</div>
+										</Col>
+									))}
+								</Row>
+							)}
 						</Card.Body>
 					</Card>
 				</>

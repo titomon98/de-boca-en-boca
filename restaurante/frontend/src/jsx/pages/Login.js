@@ -7,10 +7,10 @@ import bgimage from '../../images/logo-dbeb.jpg';
 
 function Login(props) {
 	const navigate = useNavigate();
-	const [email, setEmail] = useState('admin@restaurante.local');
+	const [email, setEmail] = useState('');
 	let errorsObj = { email: '', password: '' };
 	const [errors, setErrors] = useState(errorsObj);
-	const [password, setPassword] = useState('Admin123!');
+	const [password, setPassword] = useState('');
 	const dispatch = useDispatch();
 
 	function onLogin(e) {
@@ -18,7 +18,7 @@ function Login(props) {
 		let error = false;
 		const errorObj = { ...errorsObj };
 		if (email === '') {
-			errorObj.email = 'El correo es obligatorio';
+			errorObj.email = 'El correo o usuario es obligatorio';
 			error = true;
 		}
 		if (password === '') {
@@ -56,9 +56,11 @@ function Login(props) {
 										)}
 										<form onSubmit={onLogin}>
 											<div className="mb-3">
-												<label className="mb-1"><strong>Correo</strong></label>
+												<label className="mb-1"><strong>Correo o usuario</strong></label>
 												<input
-													type="email"
+													type="text"
+													autoCapitalize="none"
+													autoCorrect="off"
 													className="form-control"
 													value={email}
 													onChange={(e) => setEmail(e.target.value)}

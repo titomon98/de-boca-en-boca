@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Card, Row, Col, Modal, Button, Form, Spinner } from 'react-bootstrap';
 import swal from 'sweetalert';
 import { TablesApi, AccountsApi } from '../../../services/RestaurantApi';
-import { money, TABLE_STATUS } from '../../../services/helpers';
+import { money, TABLE_STATUS, fmtTime } from '../../../services/helpers';
 
 // Etiqueta de una mesa: nombre (Barra, Pequeña) o su número.
 const tableLabel = (t) => t.name || String(t.number);
@@ -77,7 +77,17 @@ const Mesas = () => {
 
 	const openModal = (presetTableId) => {
 		setLabel('');
-		setSelected(presetTableId ? [presetTableId] : []);
+		let preset = presetTableId ? [presetTableId] : [];
+		if (presetTableId) {
+			// Si la mesa ya está unida a otras (misma cuenta), preselecciona todo el grupo.
+			const union = accountsByTable(presetTableId).find((a) => (a.tables || []).length > 1);
+			if (union) {
+				preset = (union.tables || [])
+					.filter((t) => !t.isTakeout && t.number !== 0)
+					.map((t) => t.id);
+			}
+		}
+		setSelected(preset);
 		setShow(true);
 	};
 
@@ -112,7 +122,7 @@ const Mesas = () => {
 			return;
 		}
 		try {
-			const label = `Para llevar ${new Date().toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' })}`;
+			const label = `Para llevar ${fmtTime()}`;
 			const acc = await AccountsApi.open({ label, tableIds: [takeoutTable.id] });
 			navigate(`/cuenta/${acc.id}`);
 		} catch (e) {
@@ -250,7 +260,7 @@ const Mesas = () => {
 			</Card>
 
 			{/* Modal detalle de mesa ocupada */}
-			<Modal show={!!detailTable} onHide={() => setDetailTable(null)} centered>
+			<Modal show={!!detailTable} onHide={() => setDetailTable(null)} centered backdrop="static" keyboard={false}>
 				<Modal.Header closeButton>
 					<Modal.Title>{detailTable ? `Mesa ${tableLabel(detailTable)}` : ''}</Modal.Title>
 				</Modal.Header>
@@ -277,7 +287,7 @@ const Mesas = () => {
 			</Modal>
 
 			{/* Modal abrir cuenta */}
-			<Modal show={show} onHide={() => setShow(false)} centered>
+			<Modal show={show} onHide={() => setShow(false)} centered backdrop="static" keyboard={false}>
 				<Modal.Header closeButton>
 					<Modal.Title>Abrir cuenta</Modal.Title>
 				</Modal.Header>

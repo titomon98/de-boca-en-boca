@@ -4,9 +4,10 @@ import { CashClosing } from './entities/cash-closing.entity';
 import { Payment } from '../pos/entities/payment.entity';
 import { CashService } from './cash.service';
 import { CashController } from './cash.controller';
+import { AuditModule } from '../audit/audit.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([CashClosing, Payment])],
+  imports: [TypeOrmModule.forFeature([CashClosing, Payment]), AuditModule],
   controllers: [CashController],
   providers: [CashService],
   exports: [CashService],

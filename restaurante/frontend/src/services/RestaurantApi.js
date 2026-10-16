@@ -33,6 +33,10 @@ export const AccountsApi = {
   bill: (id) => unwrap(api.post(`/accounts/${id}/bill`)),
   setDelivered: (id, delivered) => unwrap(api.post(`/accounts/${id}/delivered`, { delivered })),
   setDiscount: (id, amount, reason) => unwrap(api.post(`/accounts/${id}/discount`, { amount, reason })),
+  history: () => unwrap(api.get('/accounts/history')),
+  requestDiscount: (id, amount, reason) => unwrap(api.post(`/accounts/${id}/discount-request`, { amount, reason })),
+  approveDiscount: (id) => unwrap(api.post(`/accounts/${id}/discount-approve`, {})),
+  rejectDiscount: (id) => unwrap(api.post(`/accounts/${id}/discount-reject`, {})),
   setDelivery: (id, isDelivery, courierFee) => unwrap(api.post(`/accounts/${id}/delivery`, { isDelivery, courierFee })),
   cancel: (id) => unwrap(api.post(`/accounts/${id}/cancel`)),
   remove: (id) => unwrap(api.delete(`/accounts/${id}`)),
@@ -56,6 +60,8 @@ export const PaymentsApi = {
     unwrap(api.post('/payments/items', { accountId, itemIds, paymentMethod })),
   byAccount: (accountId) => unwrap(api.get('/payments', { params: { accountId } })),
   void: (id) => unwrap(api.post(`/payments/${id}/void`)),
+  list: (from, to) => unwrap(api.get('/payments/list', { params: { from, to } })),
+  update: (id, dto) => unwrap(api.patch(`/payments/${id}`, dto)),
 };
 
 // --- Caja ---
@@ -63,6 +69,7 @@ export const CashApi = {
   summary: () => unwrap(api.get('/cash-closings/summary')),
   create: (dto) => unwrap(api.post('/cash-closings', dto)),
   list: () => unwrap(api.get('/cash-closings')),
+  update: (id, dto) => unwrap(api.patch(`/cash-closings/${id}`, dto)),
 };
 
 // --- Reportes ---
@@ -71,6 +78,8 @@ export const ReportsApi = {
   topItems: (from, to, limit, categoryId, combo) =>
     unwrap(api.get('/reports/top-items', { params: { from, to, limit, categoryId, combo } })),
   salesByDay: (from, to) => unwrap(api.get('/reports/sales-by-day', { params: { from, to } })),
+  categoryRanking: (from, to) => unwrap(api.get('/reports/category-ranking', { params: { from, to } })),
+  salesByType: (from, to) => unwrap(api.get('/reports/sales-by-type', { params: { from, to } })),
   inventory: () => unwrap(api.get('/reports/inventory')),
 };
 

@@ -1,0 +1,14 @@
+{
+  "name": "print-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Puente de impresión para impresoras térmicas de red (De Boca en Boca)",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "serialport": "^12.0.0",
+    "socket.io-client": "^4.8.3"
+  }
+}

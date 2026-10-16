@@ -24,6 +24,6 @@ export class Venue {
   @Column({ type: 'boolean', default: true })
   active: boolean;
 
-  @CreateDateColumn({ name: 'created_at', type: 'timestamp' })
+  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Card, Row, Col, Modal, Button, Form, Badge, Spinner } from 'react-bootstrap';
 import swal from 'sweetalert';
 import { TablesApi, AccountsApi } from '../../../services/RestaurantApi';
-import { money } from '../../../services/helpers';
+import { money, fmtTime } from '../../../services/helpers';
 
 /**
  * Órdenes "A domicilio" (envíos). Como Para llevar, pero marcadas como envío y
@@ -16,11 +16,13 @@ const ADomicilio = () => {
 	const [accounts, setAccounts] = useState([]);
 	const [show, setShow] = useState(false);
 	const [label, setLabel] = useState('');
-	const [fee, setFee] = useState('');
 	const [saving, setSaving] = useState(false);
 	// edición de envío de una orden existente
 	const [editAcc, setEditAcc] = useState(null);
 	const [editFee, setEditFee] = useState('');
+	// entrega: se ingresa el efectivo del motorista al entregar
+	const [deliverAcc, setDeliverAcc] = useState(null);
+	const [deliverFee, setDeliverFee] = useState('');
 
 	const load = useCallback(async () => {
 		try {
@@ -44,9 +46,10 @@ const ADomicilio = () => {
 		}
 		setSaving(true);
 		try {
-			const finalLabel = label.trim() || `Domicilio ${new Date().toLocaleTimeString('es-GT', { hour: '2-digit', minute: '2-digit' })}`;
+			const finalLabel = label.trim() || `Domicilio ${fmtTime()}`;
 			const acc = await AccountsApi.open({ label: finalLabel, tableIds: [takeoutId] });
-			await AccountsApi.setDelivery(acc.id, true, Number(fee) || 0);
+			// El efectivo del motorista se ingresa al entregar (no al crear).
+			await AccountsApi.setDelivery(acc.id, true, 0);
 			setShow(false);
 			navigate(`/cuenta/${acc.id}`);
 		} catch (e) {
@@ -57,11 +60,31 @@ const ADomicilio = () => {
 	};
 
 	const toggleDelivered = async (acc, delivered) => {
+		// Al ENTREGAR se pide el efectivo del motorista (sale de caja en ese momento).
+		if (delivered) {
+			setDeliverAcc(acc);
+			setDeliverFee(Number(acc.courierFee || 0) > 0 ? Number(acc.courierFee).toFixed(2) : '');
+			return;
+		}
 		try {
-			await AccountsApi.setDelivered(acc.id, delivered);
+			await AccountsApi.setDelivered(acc.id, false);
 			await load();
 		} catch (e) {
 			swal('Error', e?.response?.data?.message || 'No se pudo actualizar la entrega', 'error');
+		}
+	};
+
+	const confirmDeliver = async () => {
+		try {
+			// Si ya está cobrada, el envío quedó fijado al cobrar: solo se marca entregada.
+			if (deliverAcc.status !== 'paid') {
+				await AccountsApi.setDelivery(deliverAcc.id, true, Number(deliverFee) || 0);
+			}
+			await AccountsApi.setDelivered(deliverAcc.id, true);
+			setDeliverAcc(null);
+			await load();
+		} catch (e) {
+			swal('Error', e?.response?.data?.message || 'No se pudo entregar', 'error');
 		}
 	};
 
@@ -86,7 +109,7 @@ const ADomicilio = () => {
 					<h3 className="mb-0"><i className="fa-solid fa-motorcycle me-2"></i>A domicilio</h3>
 					<span className="text-muted">Envíos. El efectivo al motorista sale de caja (para cuadrar).</span>
 				</div>
-				<Button variant="primary" onClick={() => { setLabel(''); setFee(''); setShow(true); }}>
+				<Button variant="primary" onClick={() => { setLabel(''); setShow(true); }}>
 					<i className="fa-solid fa-plus me-2"></i>Nueva orden a domicilio
 				</Button>
 			</div>
@@ -97,7 +120,7 @@ const ADomicilio = () => {
 						<i className="fa-solid fa-motorcycle fs-1 d-block mb-3"></i>
 						No hay envíos pendientes.
 						<div className="mt-3">
-							<Button variant="outline-primary" onClick={() => { setLabel(''); setFee(''); setShow(true); }}>
+							<Button variant="outline-primary" onClick={() => { setLabel(''); setShow(true); }}>
 								Crear el primero
 							</Button>
 						</div>
@@ -136,9 +159,11 @@ const ADomicilio = () => {
 										<div className="small text-muted mb-3">
 											<i className="fa-solid fa-money-bill-wave me-1"></i>
 											Efectivo motorista: <strong>{money(a.courierFee)}</strong>
-											<Button variant="link" size="sm" className="p-0 ms-2" onClick={() => { setEditAcc(a); setEditFee(Number(a.courierFee || 0).toFixed(2)); }}>
-												editar
-											</Button>
+											{!paid && (
+												<Button variant="link" size="sm" className="p-0 ms-2" onClick={() => { setEditAcc(a); setEditFee(Number(a.courierFee || 0).toFixed(2)); }}>
+													editar
+												</Button>
+											)}
 										</div>
 
 										<div className="d-flex gap-2 flex-wrap">
@@ -169,7 +194,7 @@ const ADomicilio = () => {
 			)}
 
 			{/* Nueva orden a domicilio */}
-			<Modal show={show} onHide={() => setShow(false)} centered>
+			<Modal show={show} onHide={() => setShow(false)} centered backdrop="static" keyboard={false}>
 				<Modal.Header closeButton>
 					<Modal.Title>Nueva orden a domicilio</Modal.Title>
 				</Modal.Header>
@@ -183,18 +208,7 @@ const ADomicilio = () => {
 							onChange={(e) => setLabel(e.target.value)}
 						/>
 					</Form.Group>
-					<Form.Group>
-						<Form.Label>Efectivo al motorista (Q)</Form.Label>
-						<Form.Control
-							type="number"
-							step="0.01"
-							min={0}
-							placeholder="0.00"
-							value={fee}
-							onChange={(e) => setFee(e.target.value)}
-						/>
-						<Form.Text className="text-muted">Sale de caja. Se descuenta del efectivo esperado en el cierre.</Form.Text>
-					</Form.Group>
+					<Form.Text className="text-muted">El efectivo al motorista se ingresa al entregar la orden.</Form.Text>
 				</Modal.Body>
 				<Modal.Footer>
 					<Button variant="light" onClick={() => setShow(false)}>Cancelar</Button>
@@ -204,8 +218,28 @@ const ADomicilio = () => {
 				</Modal.Footer>
 			</Modal>
 
+			{/* Entregar: ingresar el efectivo del motorista (sale de caja ahora) */}
+			<Modal show={!!deliverAcc} onHide={() => setDeliverAcc(null)} centered backdrop="static" keyboard={false}>
+				<Modal.Header closeButton><Modal.Title>Entregar orden</Modal.Title></Modal.Header>
+				<Modal.Body>
+					<Form.Group>
+						<Form.Label>Efectivo al motorista (Q)</Form.Label>
+						<Form.Control type="number" step="0.01" min={0} autoFocus value={deliverFee} disabled={deliverAcc?.status === 'paid'} onChange={(e) => setDeliverFee(e.target.value)} placeholder="0.00" />
+						<Form.Text className="text-muted">
+							{deliverAcc?.status === 'paid'
+								? 'Ya se cobró al cliente con este envío. Entregue este efectivo de caja al motorista.'
+								: 'Se cobra al cliente y sale de caja al entregar. Se descuenta del efectivo esperado en el cierre. Use 0 si no aplica.'}
+						</Form.Text>
+					</Form.Group>
+				</Modal.Body>
+				<Modal.Footer>
+					<Button variant="light" onClick={() => setDeliverAcc(null)}>Cancelar</Button>
+					<Button variant="success" onClick={confirmDeliver}><i className="fa-solid fa-check me-1"></i>Entregar</Button>
+				</Modal.Footer>
+			</Modal>
+
 			{/* Editar efectivo del motorista */}
-			<Modal show={!!editAcc} onHide={() => setEditAcc(null)} centered>
+			<Modal show={!!editAcc} onHide={() => setEditAcc(null)} centered backdrop="static" keyboard={false}>
 				<Modal.Header closeButton><Modal.Title>Efectivo al motorista</Modal.Title></Modal.Header>
 				<Modal.Body>
 					<Form.Group>

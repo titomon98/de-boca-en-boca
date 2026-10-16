@@ -8,11 +8,14 @@ import {
   Patch,
   Post,
   Query,
+  ServiceUnavailableException,
   UseGuards,
 } from '@nestjs/common';
 import { ComandasService } from './comandas.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { UpdateOrderStatusDto } from './dto/update-order-status.dto';
+import { PrintDto } from './dto/print.dto';
+import { ComandasGateway } from '../../gateways/comandas.gateway';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -25,7 +28,23 @@ import {
 @Controller('orders')
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class ComandasController {
-  constructor(private readonly comandasService: ComandasService) {}
+  constructor(
+    private readonly comandasService: ComandasService,
+    private readonly gateway: ComandasGateway,
+  ) {}
+
+  /** Imprime un ticket (comanda o recibo) en la impresora de la estación, vía el puente. */
+  @Post('print')
+  @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER, Role.KITCHEN)
+  async print(@Body() dto: PrintDto) {
+    const sent = await this.gateway.emitPrint(dto.station, dto.text);
+    if (!sent) {
+      throw new ServiceUnavailableException(
+        'El puente de impresión no está conectado. Revise que la computadora del restaurante esté encendida.',
+      );
+    }
+    return { ok: true };
+  }
 
   /** El mesero envía una comanda a cocina. */
   @Post()
@@ -36,7 +55,7 @@ export class ComandasController {
 
   /** Vista de cocina: sólo comandas activas. */
   @Get('kitchen')
-  @Roles(Role.ADMINISTRATOR, Role.KITCHEN)
+  @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER, Role.KITCHEN)
   findActive() {
     return this.comandasService.findActive();
   }

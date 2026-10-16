@@ -150,6 +150,94 @@ El ranking desglosa los componentes de combos. **Ya no se incluye inventario**
   incluye su propina; las ventas se reportan sin propina y las propinas aparte.
   (ej. neto 375 + propina 15 = efectivo esperado 390.)
 
+- **Agrupación visual del menú (`grupo`):** columna `menu_items.grupo`. Productos
+  con el mismo valor se muestran como UNA tarjeta en el menú táctil (ej. "Cervezas",
+  "Gaseosas", "Frappes", "Alitas"); al tocarla, un modal lista las variantes (cada
+  una con su precio) y se eligen. Las bebidas simples se suman con contador sin
+  cerrar el modal; las variantes con `choice_groups` (alitas) pasan al modal de
+  Sabor/Aderezo una por una. No afecta precio ni analítica.
+- **Opciones/sabores a Q0:** los sabores (alitas, nuggets, pan con pollo) son
+  productos a Q0 sin categoría; el menú táctil oculta todo lo de precio 0, así solo
+  sirven como opción de `choice_groups` y se cuentan en el ranking como componentes.
+  Los aderezos (Q5) sí se venden sueltos y además son opción. "12 Alitas" es un
+  producto Q0 usado solo como componente del Combo 2.
+- **Combos con elección:** el tipo de quesadilla (res/pollo) de los combos 1 y 3 y
+  el sabor/aderezo de las alitas en combos 2 y 3 se piden como `choice_groups` del
+  propio combo. El buscador del menú (admin) filtra por nombre/categoría/descripción.
+
+- **Cocina/Barra automáticas (2026-10-02):** ya NO se marca estado a mano. La
+  comanda nace `delivered`; cada estación imprime (auto al llegar o reimprime) y
+  se asume preparada/entregada. Las pantallas Cocina/Barra son un feed reciente
+  (12h). El tiempo de mesa se mide ordenó -> pagó.
+- **Notas por estación:** la comanda lleva `notesCocina` y `notesBarra`; cada una
+  va con su orden (cocina/barra).
+- **Hora local:** todas las vistas muestran hora de Guatemala
+  (`timeZone: 'America/Guatemala'` vía helpers `fmtDateTime`/`fmtTime`).
+- **Extras:** los aderezos están en la categoría "Extras" y agrupados (grupo
+  "Aderezos") en el menú táctil.
+- **Descuentos con autorización:** admin aplica directo; cajero/mesero solo
+  "Solicitan" (monto+razón, queda en `accounts.discount_request*`); el admin ve
+  el banner en la cuenta (y aviso en Caja) y pulsa Autorizar/Rechazar. Endpoints
+  `/accounts/:id/discount-request|discount-approve|discount-reject`.
+- **Historial de cuentas:** vista `historial-cuentas` (admin/cajero) con el
+  registro de cada cuenta (estado, total, descuento, pagado, propina, tiempo
+  ordenó->pagó); "Ver" abre el detalle. Endpoint `GET /accounts/history`.
+- **Sabores de alitas repartidos (distribución):** el grupo "Sabor" de 10/20/30 y
+  Sampler es de tipo `distribute` en `choice_groups` ({distribute, total,
+  maxOptions, optionItemIds}). Reparte el total de alitas entre hasta N sabores,
+  parejo y ajustable (10->10/1, 20->20/2, 30->30/3, Sampler->60/12). El backend
+  valida suma==total y distintos<=maxOptions.
+- **Recibo al cliente:** botón "Imprimir recibo" en la cuenta; en domicilio separa
+  Productos y Envío motorista (printReceipt en printTicket.js).
+- **Puente de impresión (`print-bridge/`):** servicio Node local (puerto 7070) que
+  recibe el texto del ticket de las tablets y lo manda a la térmica de red por IP
+  (ESC/POS, 9100). Cada tablet apunta al puente en Configuración (localStorage
+  `printBridgeUrl`); si está vacío, imprime por navegador. Config de IPs por
+  estación en `print-bridge/config.json`.
+
+- **Ajustes 2026-10-05:** (1) sabores de alitas se ajustan por PASO: `step` en el
+  grupo distribute (alitas 10, sampler 5); (2) hora: `toDate` trata timestamps sin
+  zona como UTC y los muestra en Guatemala; (3) ticket y tablero de cocina muestran
+  "PARA LLEVAR"/"A DOMICILIO" en grande y la nota en negrita; (4) modales con
+  `backdrop="static" keyboard={false}` (solo X/Cancelar cierran); (5) efectivo al
+  motorista se ingresa al ENTREGAR (ADomicilio); la caja lo cuenta por
+  `delivered_at` (no por pago); (6) historial de caja EDITABLE (PATCH
+  /cash-closings/:id, solo admin, queda en bitácora `cierre_editado`); (7) reportes:
+  ranking por categoría (`GET /reports/category-ranking`, agrupa sabores/combos/
+  bebidas, desglosa componentes) y (9) ventas por tipo (`/reports/sales-by-type`:
+  Mesa/Para llevar/Domicilio); (8) fecha de reporte con formato dd/mm/yyyy +
+  "Generado"; (10) impresión consolidada en `printHtml` robusto (limpia iframes
+  previos, imprime una vez, limpia con onafterprint); (12) abrir cuenta en una mesa
+  ya unida preselecciona todo el grupo de mesas.
+
+- **Zona horaria de raíz (2026-10-05):** todas las columnas de fecha son
+  `timestamptz` (instante absoluto). Antes eran `timestamp` sin zona + `TZ=GT` en
+  el proceso, lo que corría la hora 6h. Migración idempotente en schema.sql (bloque
+  DO que convierte lo que siga siendo `timestamp`, interpretando lo guardado como
+  UTC). Los reportes agrupan por día con `AT TIME ZONE 'America/Guatemala'`. El
+  frontend muestra todo con `fmtDateTime`/`fmtTime` (America/Guatemala) y el
+  nombre de archivo de reportes también va en hora local.
+
+- **Envío a domicilio (corrige 2026-10-05):** el efectivo al motorista se le cobra
+  al cliente, así que se ingresa **al cobrar** (campo en el modal de cobro de
+  cuentas a domicilio; recalcula productos + envío). Al **entregar**, si ya está
+  cobrada, el envío queda fijo y solo se confirma (la caja lo descuenta por
+  `delivered_at`). `setDelivery` rechaza cambios en cuentas cobradas (para cambiarlo:
+  anular el cobro en Cobros) y no permite un envío que deje el neto bajo lo pagado.
+
+- **Impresión automática (2026-10-15):** el sitio es HTTPS, así que el navegador
+  bloquea llamar al puente local por HTTP. El puente ahora se conecta al servidor
+  por WebSocket (`auth.bridgeKey` == `PRINT_BRIDGE_KEY` del .env) y escucha
+  `comanda:nueva`; imprime cada comanda en la impresora de su estación
+  (`config.json`). Domicilio se rotula "A DOMICILIO - PARA LLEVAR". Letra de
+  comandas más grande (renglones doble alto en ESC/POS, 19px en navegador).
+
+- **Todo por el puente (2026-10-16):** ya no se usa el diálogo de impresión del
+  navegador. Reimprimir comanda y "Imprimir recibo" arman el texto ESC/POS en la
+  tablet y lo mandan a `POST /orders/print` {station: cocina|barra|caja, text};
+  el gateway lo reenvía al puente (sala `bridge`, evento `imprimir`). 503 si no
+  hay puente conectado. Cocina/Barra ya no auto-imprimen (lo hace el puente).
+
 ## Lotes completados
 Menú táctil, abonos/saldos y pago por producto, propinas, descuentos por mesero,
 cocina/barra, envíos con alerta de efectivo al motorista, croquis de mesas (dos

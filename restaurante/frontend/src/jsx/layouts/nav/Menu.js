@@ -58,6 +58,18 @@ export const MenuList = [
         roles: [A, C],
     },
     {
+        title: 'Cobros',
+        to: 'cobros',
+        iconStyle: 'bi bi-receipt-cutoff',
+        roles: [A, C],
+    },
+    {
+        title: 'Historial de cuentas',
+        to: 'historial-cuentas',
+        iconStyle: 'bi bi-journal-text',
+        roles: [A, C],
+    },
+    {
         title: 'Reportes',
         to: 'reportes',
         iconStyle: 'bi bi-pie-chart',
