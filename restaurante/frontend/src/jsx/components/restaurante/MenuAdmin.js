@@ -72,7 +72,10 @@ const MenuAdmin = () => {
 			available: it.available,
 			image: it.image || '',
 			combo: (it.combo?.components || []).map((c) => ({ itemId: c.itemId, quantity: c.quantity })),
+			// Se conserva todo el grupo (optional, distribute, total, maxOptions, step):
+			// la pantalla solo edita etiqueta, cantidad y opciones.
 			choiceGroups: (it.choiceGroups || []).map((g) => ({
+				...g,
 				label: g.label,
 				choose: g.choose || 1,
 				optionItemIds: [...(g.optionItemIds || [])],
@@ -138,12 +141,12 @@ const MenuAdmin = () => {
 		}
 		const dto = {
 			name: form.name.trim(),
-			description: form.description || undefined,
-			categoryId: form.categoryId ? Number(form.categoryId) : undefined,
+			description: form.description || null,
+			categoryId: form.categoryId ? Number(form.categoryId) : null,
 			price: Number(form.price),
 			type: form.type,
 			available: form.available,
-			image: form.image || undefined,
+			image: form.image || null,
 			includes: null,
 			combo: (() => {
 				const components = (form.combo || [])
@@ -154,6 +157,7 @@ const MenuAdmin = () => {
 			choiceGroups: (form.choiceGroups || [])
 				.filter((g) => g.label.trim() && g.optionItemIds.length > 0)
 				.map((g) => ({
+					...g,
 					label: g.label.trim(),
 					choose: Math.max(1, Number(g.choose) || 1),
 					optionItemIds: g.optionItemIds.map(Number),

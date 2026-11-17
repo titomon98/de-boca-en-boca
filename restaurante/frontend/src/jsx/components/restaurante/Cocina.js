@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Card, Row, Col, Button, Badge, Spinner } from 'react-bootstrap';
 import { OrdersApi } from '../../../services/RestaurantApi';
 import { connectComandas } from '../../../services/socket';
-import { printTicket } from '../../../services/printTicket';
+import { printTicket, chosenComponents } from '../../../services/printTicket';
 import { fmtTime, toDate } from '../../../services/helpers';
 
 const timeAgo = (date) => {
@@ -89,9 +89,9 @@ const Cocina = ({ type = 'food', title = 'Cocina', subtitle = 'Comandas reciente
 					{list.map((o) => (
 						<Col xl={4} lg={6} key={o.id} className="mb-3">
 							<Card className="border-start border-3 border-primary h-100">
-								<Card.Body className="p-2">
+								<Card.Body className="p-2 text-break" style={{ overflowWrap: 'anywhere', minWidth: 0 }}>
 									<div className="d-flex justify-content-between align-items-center mb-1">
-										<strong className="fs-14">Comanda #{o.id}</strong>
+										<strong className="fs-14">Comanda #{o.comandaNo || o.id}</strong>
 										<small className="text-muted">{fmtTime(o.createdAt)} · {timeAgo(o.createdAt)}</small>
 									</div>
 									{(o.account?.isDelivery || (o.account?.tables || []).some((t) => t.isTakeout || t.number === 0)) && (
@@ -105,6 +105,9 @@ const Cocina = ({ type = 'food', title = 'Cocina', subtitle = 'Comandas reciente
 											<li key={it.id} className="mb-1">
 												<span className="font-w600">{it.quantity}× </span>
 												{it.menuItem?.name}
+												{chosenComponents(it).map((c, i) => (
+													<span key={i} className="d-block ps-3">- {c.quantity}x {c.name}</span>
+												))}
 												{it.notes && <span className="d-block fw-bold text-danger" style={{ fontSize: '1rem' }}>{it.notes}</span>}
 											</li>
 										))}

@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { MenuItem } from './entities/menu-item.entity';
+import { MenuCategory } from './entities/menu-category.entity';
 import { OrderItem } from '../comandas/entities/order-item.entity';
 import { CreateMenuItemDto } from './dto/create-menu-item.dto';
 import { UpdateMenuItemDto } from './dto/update-menu-item.dto';
@@ -63,7 +64,12 @@ export class MenuService {
     const item = await this.findOne(id);
     if (dto.name !== undefined) item.name = dto.name;
     if (dto.description !== undefined) item.description = dto.description ?? null;
-    if (dto.categoryId !== undefined) item.categoryId = dto.categoryId ?? null;
+    if (dto.categoryId !== undefined) {
+      // `category` es eager: el objeto cargado (categoría vieja) pisa a
+      // categoryId al guardar. Se reemplaza también la relación.
+      item.categoryId = dto.categoryId ?? null;
+      item.category = item.categoryId ? ({ id: item.categoryId } as MenuCategory) : null;
+    }
     if (dto.price !== undefined) item.price = dto.price;
     if (dto.type !== undefined) item.type = dto.type;
     if (dto.available !== undefined) item.available = dto.available;
@@ -71,7 +77,8 @@ export class MenuService {
     if (dto.includes !== undefined) item.includes = dto.includes ?? null;
     if (dto.combo !== undefined) item.combo = dto.combo ?? null;
     if (dto.choiceGroups !== undefined) item.choiceGroups = dto.choiceGroups ?? null;
-    return this.menuItemsRepository.save(item);
+    await this.menuItemsRepository.save(item);
+    return this.findOne(id);
   }
 
   async remove(id: number): Promise<void> {

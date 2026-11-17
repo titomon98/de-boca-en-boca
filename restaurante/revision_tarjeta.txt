@@ -1,0 +1,69 @@
+===== 1. Totales del día por método (hora Guatemala) =====
+  metodo  | cobros | ventas  | propinas | total_con_propina 
+----------+--------+---------+----------+-------------------
+ card     |     14 | 2840.00 |   100.00 |           2940.00
+ cash     |     13 | 1890.00 |    40.00 |           1930.00
+ transfer |      2 |  365.00 |     0.00 |            365.00
+
+===== 2. Cobros con tarjeta del día =====
+ id  | hora  | cuenta | monto  | propina | total  |   cobro   
+-----+-------+--------+--------+---------+--------+-----------
+ 446 | 15:07 |    442 | 225.00 |   10.00 | 235.00 | Ada/Karla
+ 448 | 15:38 |    438 | 235.00 |   10.00 | 245.00 | Ada/Karla
+ 455 | 17:20 |    446 | 175.00 |   10.00 | 185.00 | Ada/Karla
+ 458 | 18:30 |    451 | 175.00 |    0.00 | 175.00 | Ada/Karla
+ 459 | 19:10 |    449 | 170.00 |   10.00 | 180.00 | Ada/Karla
+ 462 | 19:53 |    455 | 360.00 |   10.00 | 370.00 | Ada/Karla
+ 463 | 19:56 |    454 | 330.00 |   10.00 | 340.00 | Ada/Karla
+ 464 | 19:57 |    457 | 125.00 |    0.00 | 125.00 | Ada/Karla
+ 466 | 20:12 |    461 | 265.00 |    0.00 | 265.00 | Ada/Karla
+ 468 | 20:55 |    458 | 175.00 |   10.00 | 185.00 | Ada/Karla
+ 469 | 20:57 |    460 | 135.00 |   10.00 | 145.00 | Ada/Karla
+ 470 | 21:22 |    459 | 220.00 |   10.00 | 230.00 | Ada/Karla
+ 471 | 21:23 |    459 |  85.00 |    0.00 |  85.00 | Ada/Karla
+ 472 | 21:24 |    462 | 165.00 |   10.00 | 175.00 | Ada/Karla
+
+CREATE TABLE
+INSERT 0 14
+SELECT 14
+SELECT 14
+===== 3. Vouchers SIN cobro con tarjeta en el sistema =====
+ voucher | monto 
+---------+-------
+       1 |   165
+       2 |    90
+       3 |   220
+
+===== 4. Cobros con tarjeta en el sistema SIN voucher =====
+ cobro | cuenta | monto  | hora  
+-------+--------+--------+-------
+   470 |    459 | 230.00 | 21:22
+   471 |    459 |  85.00 | 21:23
+   472 |    462 | 175.00 | 21:24
+
+===== 5. Cobros en EFECTIVO/TRANSFERENCIA del día con el mismo monto que un voucher faltante (posible método equivocado) =====
+ cobro | cuenta | metodo | monto | propina | total | hora 
+-------+--------+--------+-------+---------+-------+------
+
+===== 6. Cuentas del día que quedaron sin pagar completas (abiertas/cobrando) =====
+ cuenta | status | neto | pagado 
+--------+--------+------+--------
+
+===== 7. Bitácora del día: cobros anulados/editados y cuentas anuladas/eliminadas =====
+ hora  | cuenta |  usuario  |      accion      |                          detalle                          
+-------+--------+-----------+------------------+-----------------------------------------------------------
+ 14:50 |    441 | Ada/Karla | cobro_anulado    | Q335.00 (efectivo)
+ 15:35 |    441 | Ada/Karla | cobro_editado    | Cobro #445: Q340.00 (efectivo) -> Q195.00 (transferencia)
+ 15:38 |    439 | Ada/Karla | cobro_editado    | Cobro #443: Q195.00 (efectivo) -> Q195.00 (efectivo)
+ 16:02 |    445 | Ada/Karla | cobro_anulado    | Q145.00 (transferencia)
+ 16:02 |    445 | Ada/Karla | cobro_editado    | Cobro #451: Q170.00 (efectivo) -> Q170.00 (transferencia)
+ 18:19 |        | Ada/Karla | cuenta_eliminada | Cuenta #450 (Fer) eliminada permanentemente
+ 19:57 |    457 | Ada/Karla | cobro_editado    | Cobro #464: Q125.00 (efectivo) -> Q125.00 (tarjeta)
+ 21:24 |    462 | Ada/Karla | cobro_editado    | Cobro #472: Q165.00 (efectivo) -> Q165.00 (tarjeta)
+
+===== 8. Cierres de caja del 16 y 17/11 =====
+ id |    fecha    | ventas  | efectivo | tarjeta | transferencia | propinas | diferencia | notas 
+----+-------------+---------+----------+---------+---------------+----------+------------+-------
+ 13 | 16/11 21:49 | 5095.00 |  1930.00 | 2940.00 |        365.00 |   140.00 |       0.00 | 
+ 14 | 16/11 21:49 |    0.00 |     0.00 |    0.00 |          0.00 |     0.00 |       0.00 | 
+

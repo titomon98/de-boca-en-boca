@@ -42,6 +42,14 @@ export class Order {
   @JoinColumn({ name: 'cook_id' })
   cook: User | null;
 
+  /**
+   * Número de comanda que ve el personal. Al partir una comanda en cocina y
+   * barra, ambas órdenes llevan el mismo número (el id de la primera). Null en
+   * comandas viejas: se muestra el id.
+   */
+  @Column({ name: 'comanda_no', type: 'int', nullable: true })
+  comandaNo: number | null;
+
   @Column({ type: 'varchar', length: 20, default: 'pending' })
   status: string;
 

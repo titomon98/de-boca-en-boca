@@ -95,6 +95,20 @@ export class Account {
   })
   discountRequest: number | null;
 
+  /**
+   * Propina que se le sugirió al cliente en el recibo impreso ("Imprimir recibo").
+   * Al cobrar la cuenta completa, la propina cobrada no puede ser menor.
+   */
+  @Column({
+    name: 'tip_pending',
+    type: 'numeric',
+    precision: 12,
+    scale: 2,
+    default: 0,
+    transformer: numericTransformer,
+  })
+  tipPending: number;
+
   @Column({ name: 'discount_request_reason', type: 'varchar', length: 255, nullable: true })
   discountRequestReason: string | null;
 

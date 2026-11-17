@@ -29,7 +29,7 @@ export class AccountsController {
   constructor(private readonly accountsService: AccountsService) {}
 
   @Post()
-  @Roles(Role.ADMINISTRATOR, Role.WAITER)
+  @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
   open(@Body() dto: OpenAccountDto, @CurrentUser() user: AuthUser) {
     return this.accountsService.open(dto, user);
   }
@@ -75,12 +75,23 @@ export class AccountsController {
   }
 
   @Post(':id/join-tables')
-  @Roles(Role.ADMINISTRATOR, Role.WAITER)
+  @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
   joinTables(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: JoinTablesDto,
   ) {
     return this.accountsService.joinTables(id, dto);
+  }
+
+  /** Cambia la cuenta a otra(s) mesa(s): los clientes se movieron. */
+  @Post(':id/move-tables')
+  @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
+  moveTables(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: JoinTablesDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.accountsService.moveTables(id, dto, user);
   }
 
   @Post(':id/bill')
@@ -109,6 +120,17 @@ export class AccountsController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.accountsService.setDiscount(id, dto.amount, dto.reason ?? '', user);
+  }
+
+  /** Propina impresa en el recibo: al cobrar la cuenta completa no puede ser menor. */
+  @Post(':id/tip-pending')
+  @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
+  setTipPending(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetDiscountDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.accountsService.setTipPending(id, dto.amount, user);
   }
 
   /** Solicitud de descuento (cajero/mesero/admin). La autoriza el administrador. */

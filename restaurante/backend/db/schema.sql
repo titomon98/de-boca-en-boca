@@ -107,6 +107,8 @@ ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS discount_reason VARCHA
 ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS discount_request NUMERIC(12,2);
 ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS discount_request_reason VARCHAR(255);
 ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS discount_request_by VARCHAR(150);
+-- tip_pending: propina impresa en el recibo; al cobrar la cuenta completa no puede ser menor.
+ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS tip_pending NUMERIC(12,2) NOT NULL DEFAULT 0;
 -- Envío a domicilio: courier_fee es el efectivo que sale de CAJA para el motorista.
 -- Sirve para cuadrar la caja (sobre todo si el cliente pagó por transferencia).
 ALTER TABLE restaurante.accounts ADD COLUMN IF NOT EXISTS is_delivery BOOLEAN NOT NULL DEFAULT false;
@@ -134,6 +136,8 @@ CREATE TABLE IF NOT EXISTS restaurante.orders (
 -- cook_id: cocinero que atendió la comanda (se registra al pasarla a preparación/lista).
 -- ALTER idempotente para bases ya existentes:
 ALTER TABLE restaurante.orders ADD COLUMN IF NOT EXISTS cook_id INTEGER REFERENCES restaurante.users(id);
+-- comanda_no: número compartido de cocina y barra de una misma comanda (id de la primera).
+ALTER TABLE restaurante.orders ADD COLUMN IF NOT EXISTS comanda_no INTEGER;
 -- Ya no se usa el estado 'pending': las comandas nacen 'in_preparation'.
 UPDATE restaurante.orders SET status = 'in_preparation' WHERE status = 'pending';
 

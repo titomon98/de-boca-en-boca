@@ -48,7 +48,7 @@ export class ComandasController {
 
   /** El mesero envía una comanda a cocina. */
   @Post()
-  @Roles(Role.ADMINISTRATOR, Role.WAITER)
+  @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
   create(@Body() dto: CreateOrderDto, @CurrentUser() user: AuthUser) {
     return this.comandasService.create(dto, user);
   }
@@ -85,7 +85,7 @@ export class ComandasController {
 
   /** Anula una comanda completa (descuenta su importe de la cuenta). */
   @Post(':id/cancel')
-  @Roles(Role.ADMINISTRATOR, Role.WAITER)
+  @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
   cancelOrder(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: AuthUser,
@@ -95,7 +95,7 @@ export class ComandasController {
 
   /** Anula un solo platillo de una comanda. */
   @Delete(':orderId/items/:itemId')
-  @Roles(Role.ADMINISTRATOR, Role.WAITER)
+  @Roles(Role.ADMINISTRATOR, Role.WAITER, Role.CASHIER)
   cancelItem(
     @Param('orderId', ParseIntPipe) orderId: number,
     @Param('itemId', ParseIntPipe) itemId: number,

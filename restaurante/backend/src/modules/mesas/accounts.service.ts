@@ -204,6 +204,48 @@ export class AccountsService {
   }
 
   /**
+   * Cambia la cuenta de mesa (los clientes se movieron sin avisar): la cuenta
+   * deja sus mesas actuales y queda en las nuevas. Comandas y cobros no cambian.
+   */
+  async moveTables(accountId: number, dto: JoinTablesDto, user: AuthUser): Promise<Account> {
+    await this.dataSource.transaction(async (manager) => {
+      await lockAccount(manager, accountId);
+      const account = await manager.findOne(Account, {
+        where: { id: accountId },
+        relations: { tables: true },
+      });
+      if (!account) throw new NotFoundException('Cuenta no encontrada');
+      if (account.status !== 'open' && account.status !== 'billing') {
+        throw new BadRequestException('La cuenta ya está cerrada');
+      }
+      if (account.tables.some((t) => t.isTakeout || t.number === 0)) {
+        throw new BadRequestException('Las cuentas para llevar o a domicilio no tienen mesa');
+      }
+      const newTables = await manager.find(RestaurantTable, { where: { id: In(dto.tableIds) } });
+      if (newTables.length !== new Set(dto.tableIds).size) {
+        throw new NotFoundException('Una o más mesas no existen');
+      }
+      if (newTables.some((t) => t.isTakeout || t.number === 0)) {
+        throw new BadRequestException('Elija mesas del salón');
+      }
+      assertSameSalon(newTables);
+
+      const oldTables = account.tables;
+      const label = (ts: RestaurantTable[]) => ts.map((t) => t.name || t.number).join(', ');
+      account.tables = newTables;
+      await manager.save(account);
+      for (const id of new Set([...oldTables, ...newTables].map((t) => t.id))) {
+        await recomputeTableStatus(manager, id);
+      }
+      await this.audit.log(
+        { action: 'mesa_cambiada', user, accountId, detail: `Mesa(s): ${label(oldTables)} -> ${label(newTables)}` },
+        manager,
+      );
+    });
+    return this.findOne(accountId);
+  }
+
+  /**
    * Aplica un descuento a la cuenta (a criterio del mesero). Requiere descripción
    * y queda en la bitácora. Reduce el neto a pagar (neto = total - discount).
    */
@@ -305,6 +347,33 @@ export class AccountsService {
       user,
       accountId,
       detail: `Q${discount.toFixed(2)} - ${reason.trim()}`,
+    });
+    return this.findOne(accountId);
+  }
+
+  /**
+   * Registra la propina impresa en el recibo ("Imprimir recibo"). Se puede subir
+   * pero no bajar: al cobrar la cuenta completa se exige al menos esta propina.
+   */
+  async setTipPending(accountId: number, amount: number, user: AuthUser): Promise<Account> {
+    const account = await this.findOne(accountId);
+    if (account.status === 'paid' || account.status === 'cancelled') {
+      throw new BadRequestException('La cuenta ya está cerrada');
+    }
+    const tip = round2(Number(amount) || 0);
+    const current = round2(Number(account.tipPending || 0));
+    if (tip + 0.001 < current) {
+      throw new BadRequestException(
+        `Ya se imprimió el recibo con propina de Q${current.toFixed(2)}: se puede dejar más, no menos`,
+      );
+    }
+    if (tip === current) return account;
+    await this.accountsRepository.update(accountId, { tipPending: tip });
+    await this.audit.log({
+      action: 'propina_registrada',
+      user,
+      accountId,
+      detail: `Propina en recibo Q${tip.toFixed(2)}${current > 0 ? ` (antes Q${current.toFixed(2)})` : ''}`,
     });
     return this.findOne(accountId);
   }

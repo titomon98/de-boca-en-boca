@@ -38,7 +38,7 @@ const Configuracion = () => (
 							</Button>
 							<Button
 								variant="outline-secondary"
-								onClick={() => printReceipt({ orderId: 0, label: 'Prueba', lines: [{ quantity: 1, name: 'Prueba de impresora', subtotal: 0 }], productTotal: 0, total: 0 })}
+								onClick={() => printReceipt({ orderId: 0, lines: [{ quantity: 1, name: 'Prueba de impresora', subtotal: 0 }], productTotal: 0, total: 0 })}
 							>
 								<i className="fa-solid fa-print me-1"></i>Probar caja
 							</Button>

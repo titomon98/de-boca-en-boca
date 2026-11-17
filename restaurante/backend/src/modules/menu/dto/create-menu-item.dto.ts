@@ -66,6 +66,32 @@ export class ChoiceGroupDto {
   @ArrayMinSize(1)
   @IsInt({ each: true })
   optionItemIds: number[];
+
+  // Opcional: se puede elegir de 0 hasta `choose` (ej. aguacate / picante).
+  @IsOptional()
+  @IsBoolean()
+  optional?: boolean;
+
+  // Distribución (sabores de alitas): reparte `total` entre hasta `maxOptions`,
+  // de `step` en `step`. Si no se declaran aquí, el whitelist los borra al editar.
+  @IsOptional()
+  @IsBoolean()
+  distribute?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  total?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxOptions?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  step?: number;
 }
 
 export class CreateMenuItemDto {

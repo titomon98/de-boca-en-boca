@@ -30,12 +30,23 @@ const lineLR = (label, right) => {
 };
 const priceRow = (label, value) => lineLR(label, money2(value));
 
+/** Componentes a mostrar: en combos se omiten los fijos (van primero en la lista). */
+export function chosenComponents(it) {
+  const all = it.components || [];
+  return it.menuItem?.combo ? all.slice(it.menuItem.combo.components?.length || 0) : all;
+}
+
 /** Envía el ticket al puente por el servidor. Avisa si no se pudo. */
 async function send(station, text) {
   try {
     await api.post('/orders/print', { station, text });
   } catch (e) {
-    swal('No se imprimió', e?.response?.data?.message || 'No se pudo contactar el servidor.', 'error');
+    // Si falla la impresión, lo demás (ej. el pago) ya quedó guardado.
+    swal(
+      'No se imprimió',
+      `${e?.response?.data?.message || 'No se pudo contactar el servidor.'}\n\nLo demás sí quedó guardado; puede volver a imprimir cuando el puente esté encendido.`,
+      'error',
+    );
   }
 }
 
@@ -43,7 +54,7 @@ function receiptText(data) {
   const fecha = data.fecha || new Date().toLocaleString('es-GT', { timeZone: 'America/Guatemala' });
   let t = center(data.restaurante || 'De Boca en Boca') + '\n';
   if (data.orderId) t += center('Recibo orden No. ' + data.orderId) + '\n';
-  if (data.label) t += center(data.label) + '\n';
+  if (data.mesas) t += center(data.mesas) + '\n';
   t += center(fecha) + '\n' + rule() + '\n';
   for (const it of data.lines || []) t += priceRow(`${it.quantity}x ${it.name}`, it.subtotal) + '\n';
   t += rule() + '\n';
@@ -51,7 +62,29 @@ function receiptText(data) {
   if (Number(data.discount) > 0) t += lineLR('Descuento', '-' + money2(data.discount)) + '\n';
   if (data.isDelivery) t += priceRow('Envio motorista', data.courierFee) + '\n';
   t += TALL + priceRow('TOTAL', data.total) + NORM + '\n';
-  if (data.isDelivery) t += '\n' + center('El envio se paga en efectivo') + '\n';
+  // Pago registrado: monto, propina (la cantidad que dejó el cliente) y saldo.
+  const p = data.payment;
+  if (p) {
+    t += rule() + '\n';
+    t += priceRow('Pago (' + p.method + ')', p.amount) + '\n';
+    if (Number(p.tip) > 0) t += priceRow('Propina', p.tip) + '\n';
+    t += TALL + priceRow('TOTAL PAGADO', Number(p.amount) + Number(p.tip || 0)) + NORM + '\n';
+    if (Number(p.remaining) > 0) t += priceRow('Saldo pendiente', p.remaining) + '\n';
+  }
+  // Recibo antes de pagar ("Imprimir recibo"): saldo a cobrar + propina sugerida.
+  const sg = data.suggestion;
+  if (sg) {
+    t += rule() + '\n';
+    if (Number(sg.paid) > 0) {
+      t += priceRow('Pagado', sg.paid) + '\n';
+      t += priceRow('Saldo pendiente', sg.pending) + '\n';
+    }
+    if (Number(sg.tip) > 0) {
+      t += priceRow('Propina sugerida', sg.tip) + '\n';
+      t += TALL + priceRow('TOTAL CON PROPINA', Number(sg.pending) + Number(sg.tip)) + NORM + '\n';
+    }
+  }
+  if (data.isDelivery && data.courierCashNote !== false) t += '\n' + center('El envio se paga en efectivo') + '\n';
   t += '\n' + center('Gracias por su compra') + '\n' + rule() + '\n';
   return t;
 }
@@ -63,13 +96,19 @@ function comandaText(order, items, station) {
     .join(', ') || '-';
   const fecha = toDate(order.createdAt || Date.now()).toLocaleString('es-GT', { timeZone: 'America/Guatemala' });
   let t = center('De Boca en Boca') + '\n';
-  t += BIG + center('COMANDA #' + order.id, W / 2) + NORM + '\n';
+  t += BIG + center('COMANDA #' + (order.comandaNo || order.id), W / 2) + NORM + '\n';
   for (const a of areaLines(order)) t += BIG + center(a, W / 2) + NORM + '\n';
   t += '\n' + BIG + 'Mesa: ' + mesas + NORM + '\n';
   t += TALL + 'Mesero: ' + (order.waiter?.name || '-') + '\n' + fecha + NORM + '\n' + rule() + '\n';
   for (const it of items) {
-    t += `${BIG}${it.quantity}x ${it.menuItem?.name || ''}${NORM}\n`;
-    for (const c of it.components || []) t += `${BIG} - ${c.quantity ? c.quantity + 'x ' : ''}${c.name || ''}${NORM}\n`;
+    // Combos: "1x Combo (Q95)" con solo lo elegido debajo (sin lo fijo que trae).
+    const combo = !!it.menuItem?.combo;
+    const raw = it.menuItem?.name || '';
+    // Sin el número del combo: "Combo 3" -> "Combo (Q95)".
+    const name = combo ? `${raw.replace(/\s*(?:no\.?\s*|#\s*)?\d+\b/gi, '').trim() || raw} (Q${Number(it.unitPrice)})` : raw;
+    t += `${BIG}${it.quantity}x ${name}${NORM}\n`;
+    // Lo elegido con guiones (en combos sin lo fijo que trae el combo).
+    for (const c of chosenComponents(it)) t += BIG + ' - ' + (c.quantity ? c.quantity + 'x ' : '') + (c.name || '') + NORM + '\n';
     if (it.notes) t += BIG + ' ' + it.notes + NORM + '\n';
   }
   t += rule() + '\n';
@@ -94,8 +133,10 @@ export function printTicket(order, opts = {}) {
 /**
  * Imprime el RECIBO del cliente en la impresora de caja. En domicilio separa
  * productos y envío al motorista.
- * data: { orderId, label, lines:[{quantity,name,subtotal}], productTotal,
- *         discount, courierFee, isDelivery, total, fecha }
+ * data: { orderId, lines:[{quantity,name,subtotal}], productTotal,
+ *         discount, courierFee, isDelivery, total, fecha,
+ *         payment?: { amount, tip, method, remaining },   // al registrar un pago
+ *         suggestion?: { paid, pending, tip } }           // "Imprimir recibo" (propina sugerida)
  */
 export function printReceipt(data = {}) {
   return send('caja', receiptText(data));

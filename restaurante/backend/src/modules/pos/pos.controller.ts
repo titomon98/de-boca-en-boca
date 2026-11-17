@@ -29,14 +29,14 @@ export class PosController {
   constructor(private readonly posService: PosService) {}
 
   @Post()
-  @Roles(Role.ADMINISTRATOR, Role.CASHIER)
+  @Roles(Role.ADMINISTRATOR, Role.CASHIER, Role.WAITER)
   pay(@Body() dto: CreatePaymentDto, @CurrentUser() user: AuthUser) {
     return this.posService.pay(dto, user);
   }
 
   /** Cobro por producto (división de cuenta). */
   @Post('items')
-  @Roles(Role.ADMINISTRATOR, Role.CASHIER)
+  @Roles(Role.ADMINISTRATOR, Role.CASHIER, Role.WAITER)
   payItems(@Body() dto: PayItemsDto, @CurrentUser() user: AuthUser) {
     return this.posService.payItems(dto, user);
   }
@@ -60,7 +60,7 @@ export class PosController {
   }
 
   @Get()
-  @Roles(Role.ADMINISTRATOR, Role.CASHIER)
+  @Roles(Role.ADMINISTRATOR, Role.CASHIER, Role.WAITER)
   findByAccount(@Query('accountId', ParseIntPipe) accountId: number) {
     return this.posService.findByAccount(accountId);
   }

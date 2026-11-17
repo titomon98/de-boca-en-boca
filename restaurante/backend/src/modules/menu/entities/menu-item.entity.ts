@@ -67,6 +67,8 @@ export class MenuItem {
         label: string;
         choose: number;
         optionItemIds: number[];
+        // Opcional: de 0 hasta `choose` (ej. aguacate / picante en quesadillas).
+        optional?: boolean;
         // Grupo de distribución (ej. sabores de alitas): reparte `total` unidades
         // entre hasta `maxOptions` opciones elegidas.
         distribute?: boolean;

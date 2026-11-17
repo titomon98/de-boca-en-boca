@@ -210,7 +210,7 @@ const MenuPicker = ({ categories, menu, cart, onAdd, onRemove }) => {
 			{/* Modal: elegir variante de un grupo. Las simples (bebidas) se suman
 			    varias veces con contador sin cerrar; las que tienen sabor/aderezo
 			    pasan al modal de opciones una por una. */}
-			<Modal show={!!groupModal} onHide={() => setGroupModal(null)} centered backdrop="static" keyboard={false}>
+			<Modal show={!!groupModal} onHide={() => setGroupModal(null)} centered size="lg" backdrop="static" keyboard={false}>
 				<Modal.Header closeButton><Modal.Title>Elija una opción</Modal.Title></Modal.Header>
 				<Modal.Body>
 					<Row className="g-2">
@@ -218,7 +218,7 @@ const MenuPicker = ({ categories, menu, cart, onAdd, onRemove }) => {
 							const hasChoices = (m.choiceGroups || []).length > 0;
 							const count = qtyInCart(m.id);
 							return (
-								<Col xs={6} key={m.id}>
+								<Col xs={4} key={m.id}>
 									<Card
 										className={`h-100 ${count > 0 ? 'border-success border-2' : ''}`}
 										style={{ cursor: 'pointer' }}

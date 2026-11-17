@@ -11,6 +11,15 @@ import { Server, Socket } from 'socket.io';
 import { timingSafeEqual } from 'crypto';
 import { JwtPayload } from '../modules/auth/strategies/jwt.strategy';
 
+/** Nombre del combo sin su número ("Combo 3" / "Combo No. 3" -> "Combo"). */
+/** Componentes a imprimir: en combos se omiten los fijos (van primero en la lista). */
+const chosenComponents = (it: any) => {
+  const all = it.components ?? [];
+  return it.menuItem?.combo ? all.slice(it.menuItem.combo.components?.length ?? 0) : all;
+};
+const comboName = (name: string) =>
+  name.replace(/\s*(?:no\.?\s*|#\s*)?\d+\b/gi, '').trim() || name;
+
 /**
  * Canal en tiempo real mesero -> cocina.
  *
@@ -96,8 +105,26 @@ export class ComandasGateway
   }
 
   /** Emite una comanda nueva a cocina y al personal de salón. */
-  emitNewOrder(order: unknown) {
-    this.server.to('kitchen').to('staff').emit('comanda:nueva', order);
+  emitNewOrder(order: { id: number; comandaNo?: number | null; items?: any[] }) {
+    this.server.to('kitchen').to('staff').except('bridge').emit('comanda:nueva', order);
+    // El puente imprime "COMANDA #<id>" y cada renglón como "<cant>x <nombre>" con
+    // sus componentes debajo. Se le ajusta el pedido para el ticket:
+    //  - número compartido de la comanda (cocina y barra con el mismo número);
+    //  - combos: "1x Combo (Q95)" sin listar lo que trae (ya lo saben);
+    //  - debajo de cada renglón, lo elegido con guiones ("- 10x BBQ"); en combos
+    //    solo lo elegido, no lo fijo que trae el combo.
+    this.server.to('bridge').emit('comanda:nueva', {
+      ...order,
+      id: order.comandaNo ?? order.id,
+      items: (order.items ?? []).map((it) => ({
+        ...it,
+        components: chosenComponents(it),
+        // Combos sin su número: "Combo 3" -> "Combo (Q95)".
+        menuItem: it.menuItem?.combo
+          ? { ...it.menuItem, name: `${comboName(it.menuItem.name)} (Q${Number(it.unitPrice)})` }
+          : it.menuItem,
+      })),
+    });
   }
 
   /**

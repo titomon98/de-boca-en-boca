@@ -100,6 +100,8 @@ export const AUDIT_ACTIONS = {
   cuenta_en_cobro: 'Cuenta en cobro',
   pago_registrado: 'Pago registrado',
   cuenta_pagada: 'Cuenta pagada',
+  propina_registrada: 'Propina en recibo',
+  mesa_cambiada: 'Cambio de mesa',
   cuenta_anulada: 'Cuenta anulada',
   orden_entregada: 'Orden entregada',
   orden_pendiente_entrega: 'Orden marcada pendiente de entrega',

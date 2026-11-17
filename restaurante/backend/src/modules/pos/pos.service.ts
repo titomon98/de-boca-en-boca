@@ -92,6 +92,16 @@ export class PosService {
           `El pago excede el saldo pendiente de Q${Math.max(remainingBeforePayment, 0).toFixed(2)}`,
         );
       }
+      // Si este pago cierra la cuenta, la propina total no puede ser menor que la
+      // que se imprimió en el recibo.
+      if (amount + 0.001 >= remainingBeforePayment) {
+        const missing = await this.missingTip(manager, account, tip);
+        if (missing > 0) {
+          throw new BadRequestException(
+            `El recibo se imprimió con propina de Q${Number(account.tipPending).toFixed(2)}: falta cobrar Q${missing.toFixed(2)} de propina (puede ser más, no menos)`,
+          );
+        }
+      }
       const payment = manager.create(Payment, {
         accountId: account.id,
         userId: user.id,
@@ -180,6 +190,13 @@ export class PosService {
         );
       }
 
+      // El cobro por productos no lleva propina: si cerraría la cuenta y el recibo
+      // se imprimió con propina pendiente, se cobra con "Cobrar total" para incluirla.
+      if (amount + 0.001 >= remaining && (await this.missingTip(manager, account, 0)) > 0) {
+        throw new BadRequestException(
+          `El recibo se imprimió con propina de Q${Number(account.tipPending).toFixed(2)}: cobre lo que falta con "Cobrar total / abono" para incluir la propina`,
+        );
+      }
       const payment = manager.create(Payment, {
         accountId: account.id,
         userId: user.id,
@@ -225,6 +242,19 @@ export class PosService {
     });
 
     return this.buildResult(paymentId);
+  }
+
+  /** Propina que falta para llegar a la impresa en el recibo (0 si no falta). */
+  private async missingTip(manager: EntityManager, account: Account, tipNow: number): Promise<number> {
+    const pending = round2(Number(account.tipPending || 0));
+    if (pending <= 0) return 0;
+    const row = await manager
+      .getRepository(Payment)
+      .createQueryBuilder('payment')
+      .select('COALESCE(SUM(payment.tip), 0)', 'tips')
+      .where('payment.accountId = :accountId', { accountId: account.id })
+      .getRawOne<{ tips: string }>();
+    return Math.max(round2(pending - Number(row?.tips || 0) - tipNow), 0);
   }
 
   private async sumPayments(

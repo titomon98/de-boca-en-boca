@@ -53,6 +53,10 @@ Debe decir `conectado al servidor, esperando comandas`. Deja esa máquina encend
 2. Dentro de esta carpeta corre `npm install` (una sola vez).
 3. Presiona `Win+R`, escribe `shell:startup` y Enter. Se abre la carpeta Inicio.
 4. Arrastra ahí `iniciar-oculto.vbs` con clic derecho -> *Crear acceso directo aquí*.
+5. (Opcional) Acceso directo en el escritorio: clic derecho en `iniciar-oculto.vbs`
+   -> *Enviar a -> Escritorio (crear acceso directo)*. **No copiar el archivo**: tiene
+   que quedarse en esta carpeta. Al darle doble clic avisa si quedó funcionando o
+   si ya estaba corriendo (no abre dos).
 
 Al iniciar sesión en Windows el puente arranca **oculto** (sin ventana, nadie lo
 puede cerrar). Si se cae, se vuelve a levantar solo en 5 segundos. Los mensajes

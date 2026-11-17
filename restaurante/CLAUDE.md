@@ -238,6 +238,32 @@ El ranking desglosa los componentes de combos. **Ya no se incluye inventario**
   el gateway lo reenvía al puente (sala `bridge`, evento `imprimir`). 503 si no
   hay puente conectado. Cocina/Barra ya no auto-imprimen (lo hace el puente).
 
+- **Mesero cobra (2026-10-16):** el mesero puede cobrar (total/abono y por
+  producto); anular/corregir cobros sigue siendo de admin y cajero.
+- **Grupos opcionales en `choice_groups`:** `optional: true` permite elegir de 0
+  hasta `choose`, cada opción una vez (ej. Quesadilla MX/pollo y combos con quesadilla: "Agregar", choose 1, con
+  "Con aguacate"/"Con picante", Q0). Script `db/quesadillas_aguacate_picante.sql`.
+  El DTO del menú ya declara `optional/distribute/total/maxOptions/step` (antes
+  el whitelist los borraba al editar un producto en Menú).
+
+- **Menú CRUD (2026-10-16):** `category` es relación eager; al editar, el objeto
+  cargado pisaba `categoryId` (el cambio de categoría no se guardaba). `update`
+  ahora reemplaza también la relación. MenuAdmin conserva los campos extra de
+  `choice_groups` al editar y manda `null` para quitar categoría/descripción/foto.
+  El Combo 3 no lleva "Agregar" (aguacate/picante).
+
+- **Impresos sin nombre de cuenta (2026-10-16):** el nombre (label) de la cuenta
+  NUNCA se imprime: ni en comandas ni en recibos. Combos en comanda: "1x Combo
+  (Q95)" sin número ni componentes; sabores repartidos con cantidad ("6 BBQ, 6
+  Búfalo"). Cocina y barra comparten número (`orders.comanda_no`).
+
+- **Cambiar mesa (2026-11-17):** botón morado "Cambiar mesa" en la cuenta (no en
+  para llevar/domicilio). `POST /accounts/:id/move-tables` {tableIds}: la cuenta deja
+  sus mesas y queda en las nuevas (mismo salón), comandas y cobros intactos;
+  bitácora `mesa_cambiada`. Cajero también agrega comida (rol en abrir cuenta,
+  unir mesas, comandas). La nota del renglón ya no lleva las elecciones
+  (`stripChoiceNotes` en comandas.service): salen con guiones.
+
 ## Lotes completados
 Menú táctil, abonos/saldos y pago por producto, propinas, descuentos por mesero,
 cocina/barra, envíos con alerta de efectivo al motorista, croquis de mesas (dos

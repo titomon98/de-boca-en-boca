@@ -11,6 +11,10 @@ import {
 import { printReceipt } from '../../../services/printTicket';
 import MenuPicker from './MenuPicker';
 
+// Botón azul de imprimir (el primario de la marca es amarillo).
+const PURPLE_BTN = { backgroundColor: '#6A1B9A', borderColor: '#6A1B9A', color: '#fff' };
+const BLUE_BTN = { backgroundColor: '#1565C0', borderColor: '#1565C0', color: '#fff' };
+
 const CuentaDetail = () => {
 	const { id } = useParams();
 	const navigate = useNavigate();
@@ -29,8 +33,10 @@ const CuentaDetail = () => {
 		navigate(account?.isDelivery ? '/a-domicilio' : takeout ? '/para-llevar' : '/mesas');
 	};
 	const user = getCurrentUser();
-	const canPay = [ROLES.ADMIN, ROLES.CASHIER].includes(user.role);
-	const canOrder = [ROLES.ADMIN, ROLES.WAITER].includes(user.role);
+	// El mesero también cobra; anular/corregir cobros queda para admin y cajero.
+	const canPay = [ROLES.ADMIN, ROLES.CASHIER, ROLES.WAITER].includes(user.role);
+	const canVoid = [ROLES.ADMIN, ROLES.CASHIER].includes(user.role);
+	const canOrder = [ROLES.ADMIN, ROLES.WAITER, ROLES.CASHIER].includes(user.role);
 	const isAdmin = user.role === ROLES.ADMIN;
 
 	const [loading, setLoading] = useState(true);
@@ -66,6 +72,9 @@ const CuentaDetail = () => {
 	// propina (al cobrar por monto)
 	const [tipEnabled, setTipEnabled] = useState(false);
 	const [tipAmount, setTipAmount] = useState('');
+	// Modal "Imprimir recibo": propina sugerida que va impresa en el recibo.
+	const [showReceipt, setShowReceipt] = useState(false);
+	const [receiptTip, setReceiptTip] = useState('');
 
 	// descuento
 	const [showDiscount, setShowDiscount] = useState(false);
@@ -77,6 +86,8 @@ const CuentaDetail = () => {
 	const [showJoin, setShowJoin] = useState(false);
 	const [allTables, setAllTables] = useState([]);
 	const [joinSel, setJoinSel] = useState([]);
+	const [showMove, setShowMove] = useState(false);
+	const [moveSel, setMoveSel] = useState([]);
 
 	const load = useCallback(async () => {
 		const [a, o, m, c, p, lg] = await Promise.all([
@@ -182,7 +193,7 @@ const CuentaDetail = () => {
 				const d = distinctCount(g.label);
 				return total === groupTarget(g) && d >= 1 && d <= maxOptions(g);
 			}
-			return total === choose(g);
+			return g.optional ? total <= choose(g) : total === choose(g);
 		})
 		: false;
 
@@ -207,11 +218,21 @@ const CuentaDetail = () => {
 	// Confirma los productos elegidos y agrega el platillo como línea propia.
 	const confirmConfig = () => {
 		const item = configItem;
-		const choices = choiceGroups(item).map((g) => {
-			const counts = configChoices[g.label] || {};
-			const parts = Object.entries(counts).map(([id, n]) => `${productName(Number(id))}${n > 1 ? ` x${n}` : ''}`);
-			return `${g.label}: ${parts.join(', ')}`;
-		});
+		// Nota del renglón: "Sabor: 6 BBQ, 6 Búfalo; Aderezo: Ranch". En los sabores
+		// repartidos va la cantidad de alitas de cada uno (si es un solo sabor, sin
+		// número). Grupos opcionales sin elegir no se escriben.
+		const choices = choiceGroups(item)
+			.map((g) => {
+				const entries = Object.entries(configChoices[g.label] || {}).filter(([, n]) => n > 0);
+				if (entries.length === 0) return null;
+				const parts = entries.map(([id, n]) => {
+					const name = productName(Number(id));
+					if (g.distribute) return entries.length > 1 ? `${n} ${name}` : name;
+					return n > 1 ? `${name} x${n}` : name;
+				});
+				return { text: `${g.label}: ${parts.join(', ')}`, optional: !!g.optional };
+			})
+			.filter(Boolean);
 		const chosenItemIds = [];
 		for (const g of choiceGroups(item)) {
 			const counts = configChoices[g.label] || {};
@@ -221,7 +242,7 @@ const CuentaDetail = () => {
 		}
 		setCart((prev) => [
 			...prev,
-			{ lineId: `${item.id}-${Date.now()}`, menuItem: item, quantity: 1, notes: '', choices, chosenItemIds },
+			{ lineId: `${item.id}-${Date.now()}`, menuItem: item, quantity: 1, notes: '', choices: choices.map((c) => c.text), chosenItemIds },
 		]);
 		setShowConfig(false);
 		setConfigItem(null);
@@ -250,8 +271,9 @@ const CuentaDetail = () => {
 				notesCocina: notesCocina || undefined,
 				notesBarra: notesBarra || undefined,
 				items: cart.map((x) => {
-					const ch = (x.choices || []).length ? x.choices.join('; ') : '';
-					const notes = [ch, x.notes].filter(Boolean).join(' · ');
+					// Las elecciones ya salen con guiones ("- 10x BBQ"); en la nota solo va
+					// lo que escribió el mesero.
+					const notes = x.notes;
 					return {
 						menuItemId: x.menuItem.id,
 						quantity: x.quantity,
@@ -291,8 +313,10 @@ const CuentaDetail = () => {
 		const rem = Math.max(netWithFee(fee) - paid, 0);
 		setPayAmount(rem ? rem.toFixed(2) : '');
 		setPayMethod('cash');
-		setTipEnabled(false);
-		setTipAmount('');
+		// Propina impresa en el recibo que falta cobrar: va prellenada (se puede subir, no bajar).
+		const left = tipLeft();
+		setTipEnabled(left > 0);
+		setTipAmount(left > 0 ? left.toFixed(2) : '');
 		setShowPay(true);
 	};
 
@@ -308,13 +332,18 @@ const CuentaDetail = () => {
 		setPayAmount(Math.max(netWithFee(Number(v) || 0) - paid, 0).toFixed(2));
 	};
 
-	const submitPay = async () => {
+	const submitPay = async (print = false) => {
 		const amount = Number(payAmount);
 		if (!amount || amount <= 0) {
 			swal('Atención', 'Ingrese un monto válido.', 'warning');
 			return;
 		}
 		const tip = tipEnabled ? Number(tipAmount) || 0 : 0;
+		const closes = amount + 0.001 >= (isDelivery ? Math.max(netWithFee(Number(payFee) || 0) - paid, 0) : remaining);
+		if (closes && tip + 0.001 < tipLeft()) {
+			swal('Propina', `El recibo se imprimió con propina de ${money(account.tipPending)}. Al cobrar la cuenta completa la propina debe ser de al menos ${money(tipLeft())} (puede ser más, no menos).`, 'warning');
+			return;
+		}
 		try {
 			// En domicilio, primero se guarda el envío (se cobra al cliente) y luego el pago.
 			if (account.isDelivery) {
@@ -325,6 +354,14 @@ const CuentaDetail = () => {
 			}
 			const res = await PaymentsApi.pay({ accountId: Number(id), amount, paymentMethod: payMethod, tip });
 			setShowPay(false);
+			// Recibo del pago (con la propina tal cual la dejó el cliente), solo si se pidió.
+			const fee = account.isDelivery ? Number(payFee) || 0 : 0;
+			if (print) printAccount({
+				courierFee: fee,
+				total: netWithFee(fee),
+				paidMethod: payMethod,
+				payment: { amount, tip, method: paymentLabel(payMethod), remaining: res.remaining },
+			});
 			if (res.accountStatus === 'paid') {
 				swal('Cuenta pagada', `La cuenta fue liquidada.${courierNote()}`, 'success').then(() =>
 					goBack(),
@@ -356,7 +393,7 @@ const CuentaDetail = () => {
 		.filter((it) => payItemSel.includes(it.id))
 		.reduce((s, it) => s + Number(it.subtotal), 0);
 
-	const submitPayItems = async () => {
+	const submitPayItems = async (print = false) => {
 		if (payItemSel.length === 0) {
 			swal('Atención', 'Seleccione al menos un producto.', 'warning');
 			return;
@@ -364,6 +401,16 @@ const CuentaDetail = () => {
 		try {
 			const res = await PaymentsApi.payItems(Number(id), payItemSel, payItemsMethod);
 			setShowPayItems(false);
+			// Recibo solo de los productos que se pagaron, si se pidió.
+			const paidLines = pendingItems.filter((it) => payItemSel.includes(it.id));
+			if (print) printAccount({
+				lines: paidLines.map((it) => ({ quantity: it.quantity, name: it.menuItem?.name || '', subtotal: it.subtotal })),
+				productTotal: payItemsTotal,
+				discount: 0,
+				isDelivery: false,
+				total: payItemsTotal,
+				payment: { amount: payItemsTotal, tip: 0, method: paymentLabel(payItemsMethod), remaining: res.remaining },
+			});
 			if (res.accountStatus === 'paid') {
 				swal('Cuenta pagada', `La cuenta fue liquidada.${courierNote()}`, 'success').then(() =>
 					goBack(),
@@ -425,7 +472,7 @@ const CuentaDetail = () => {
 	const cancelOrder = (o) => {
 		swal({
 			title: '¿Anular comanda?',
-			text: `Comanda #${o.id}. Se descontará de la cuenta.`,
+			text: `Comanda #${o.comandaNo || o.id}. Se descontará de la cuenta.`,
 			icon: 'warning',
 			buttons: ['Cancelar', 'Anular comanda'],
 			closeOnClickOutside: false,
@@ -525,6 +572,31 @@ const CuentaDetail = () => {
 		}
 	};
 
+	// Cambiar de mesa: los clientes se movieron sin avisar.
+	const openMove = async () => {
+		try {
+			setAllTables(await TablesApi.list());
+		} catch (e) {
+			swal('Error', 'No se pudieron cargar las mesas', 'error');
+			return;
+		}
+		setMoveSel([]);
+		setShowMove(true);
+	};
+	const submitMove = async () => {
+		if (moveSel.length === 0) {
+			swal('Cambiar mesa', 'Elija la mesa nueva.', 'warning');
+			return;
+		}
+		try {
+			await AccountsApi.moveTables(id, moveSel);
+			setShowMove(false);
+			await load();
+		} catch (e) {
+			swal('Error', e?.response?.data?.message || 'No se pudo cambiar la mesa', 'error');
+		}
+	};
+
 	if (loading || !account) {
 		return <div className="text-center p-5"><Spinner animation="border" variant="primary" /></div>;
 	}
@@ -533,6 +605,9 @@ const CuentaDetail = () => {
 	const courierCharge = account.isDelivery ? Number(account.courierFee || 0) : 0;
 	const net = Number(account.total) - discount + courierCharge;
 	const remaining = Math.max(net - paid, 0);
+	// Propina impresa en el recibo que aún no se ha cobrado.
+	const tipLeft = () =>
+		Math.max(Math.round((Number(account.tipPending || 0) - payments.reduce((t, p) => t + Number(p.tip || 0), 0)) * 100) / 100, 0);
 	const closed = account.status === 'paid' || account.status === 'cancelled';
 	// "Para llevar" es una orden, no una mesa: no aplica unir mesas.
 	const isTakeout = (account.tables || []).some((t) => t.isTakeout || t.number === 0);
@@ -542,21 +617,54 @@ const CuentaDetail = () => {
 	const nothingToCharge = net <= 0;
 
 	// Recibo imprimible: desglosa productos y, en domicilio, el envío al motorista.
-	const printAccount = () => {
+	// `extra` sobreescribe datos del recibo (ej. al registrar un pago: monto, propina, saldo).
+	const printAccount = ({ paidMethod, ...extra } = {}) => {
+		// "El envío se paga en efectivo" solo si no se ha pagado con transferencia/tarjeta.
+		const paidNonCash = [...payments.map((p) => p.paymentMethod), paidMethod].some((m) => m && m !== 'cash');
 		const lines = (orders || [])
 			.filter((o) => o.status !== 'cancelled')
 			.flatMap((o) => o.items || [])
 			.map((it) => ({ quantity: it.quantity, name: it.menuItem?.name || '', subtotal: it.subtotal }));
+		const tables = account.tables || [];
+		const mesas = isDelivery
+			? 'A domicilio'
+			: tables.some((t) => t.isTakeout || t.number === 0)
+				? 'Para llevar'
+				: `Mesa${tables.length > 1 ? 's' : ''}: ${tables.map((t) => t.name || t.number).join(', ')}`;
 		printReceipt({
 			orderId: account.id,
-			label: account.label,
+			mesas,
 			lines,
 			productTotal: account.total,
 			discount,
 			courierFee: courierCharge,
 			isDelivery,
+			courierCashNote: !paidNonCash,
 			total: net,
+			...extra,
 		});
+	};
+
+	// "Imprimir recibo": lo que se cobra (saldo pendiente) con una propina sugerida.
+	const openReceipt = () => {
+		const base = Math.max(net - paid, 0);
+		const prev = Number(account.tipPending || 0);
+		// Si ya se imprimió con propina, se parte de esa (no se puede bajar).
+		setReceiptTip((prev > 0 ? prev : Math.round(base * 0.10 * 100) / 100).toFixed(2));
+		setShowReceipt(true);
+	};
+	const submitReceipt = async () => {
+		const tip = Number(receiptTip) || 0;
+		try {
+			// Queda registrada para cobrarse al cobrar la cuenta completa.
+			if (tip > 0 || Number(account.tipPending || 0) > 0) await AccountsApi.setTipPending(Number(id), tip);
+		} catch (e) {
+			swal('Propina', e?.response?.data?.message || 'No se pudo registrar la propina', 'warning');
+			return;
+		}
+		printAccount({ suggestion: { paid, pending: Math.max(net - paid, 0), tip } });
+		setShowReceipt(false);
+		load();
 	};
 
 	return (
@@ -621,7 +729,7 @@ const CuentaDetail = () => {
 			)}
 
 			<div className="mb-3">
-				<Button variant="outline-primary" size="sm" onClick={printAccount} disabled={nothingToCharge}>
+				<Button variant="outline-primary" size="sm" onClick={openReceipt} disabled={nothingToCharge}>
 					<i className="fa-solid fa-print me-1"></i>Imprimir recibo
 				</Button>
 			</div>
@@ -631,6 +739,11 @@ const CuentaDetail = () => {
 					{canOrder && account.status === 'open' && !isTakeout && (
 						<Button variant="outline-secondary" size="sm" onClick={openJoin}>
 							<i className="bi bi-link-45deg me-1"></i>Unir mesas
+						</Button>
+					)}
+					{canOrder && !isTakeout && (
+						<Button size="sm" style={PURPLE_BTN} onClick={openMove}>
+							<i className="bi bi-arrow-left-right me-1"></i>Cambiar mesa
 						</Button>
 					)}
 					{account.status === 'open' && (
@@ -694,9 +807,9 @@ const CuentaDetail = () => {
 									const meta = ORDER_STATUS[o.status] || ORDER_STATUS.pending;
 										const canEditOrder = canOrder && account.status === 'open' && o.status !== 'cancelled';
 									return (
-										<div key={o.id} className="border rounded p-3 mb-3">
+										<div key={o.id} className="border rounded p-3 mb-3 text-break" style={{ overflowWrap: 'anywhere' }}>
 											<div className="d-flex justify-content-between mb-2">
-												<strong>Comanda #{o.id}</strong>
+												<strong>Comanda #{o.comandaNo || o.id}</strong>
 												<span className={`badge ${meta.badge}`}>{meta.label}</span>
 													{canEditOrder && (<Button size="sm" variant="outline-danger" className="ms-2 py-0 px-1" title="Anular comanda" onClick={() => cancelOrder(o)}><i className="fa-solid fa-ban"></i></Button>)}
 											</div>
@@ -787,7 +900,7 @@ const CuentaDetail = () => {
 											<td>{paymentLabel(p.paymentMethod)}</td>
 											<td className="text-end font-w600">{money(p.amount)}</td>
 											<td className="text-end" style={{ width: 90 }}>
-												<Button size="sm" variant="outline-danger" onClick={() => voidPayment(p)}>Anular</Button>
+												{canVoid && <Button size="sm" variant="outline-danger" onClick={() => voidPayment(p)}>Anular</Button>}
 											</td>
 										</tr>
 									))}
@@ -816,6 +929,47 @@ const CuentaDetail = () => {
 					)}
 				</Card.Body>
 			</Card>
+
+			{/* Modal imprimir recibo (con propina sugerida) */}
+			<Modal show={showReceipt} onHide={() => setShowReceipt(false)} centered backdrop="static" keyboard={false}>
+				<Modal.Header closeButton><Modal.Title>Imprimir recibo</Modal.Title></Modal.Header>
+				<Modal.Body>
+					{(() => {
+						const base = Math.max(net - paid, 0);
+						const s10 = Math.round(base * 0.10 * 100) / 100;
+						const s15 = Math.round(base * 0.15 * 100) / 100;
+						return (
+							<>
+								{paid > 0 && (
+									<div className="d-flex justify-content-between mb-1 text-muted">
+										<span>Ya pagado</span><span>{money(paid)}</span>
+									</div>
+								)}
+								<div className="d-flex justify-content-between mb-3">
+									<span>A cobrar</span><strong>{money(base)}</strong>
+								</div>
+								<Form.Label className="mb-1">Propina sugerida (Q)</Form.Label>
+								<div className="d-flex gap-2 flex-wrap mb-2">
+									<Button size="sm" variant="outline-success" onClick={() => setReceiptTip(s10.toFixed(2))}>10% ({money(s10)})</Button>
+									<Button size="sm" variant="outline-success" onClick={() => setReceiptTip(s15.toFixed(2))}>15% ({money(s15)})</Button>
+									<Button size="sm" variant="outline-secondary" onClick={() => setReceiptTip('')}>Sin propina</Button>
+								</div>
+								<Form.Control type="number" step="0.01" min={0} value={receiptTip} onChange={(e) => setReceiptTip(e.target.value)} placeholder="0.00" />
+								<div className="d-flex justify-content-between border-top pt-2 mt-3">
+									<strong>Total con propina</strong>
+									<strong className="text-success">{money(base + (Number(receiptTip) || 0))}</strong>
+								</div>
+							</>
+						);
+					})()}
+				</Modal.Body>
+				<Modal.Footer>
+					<Button variant="light" onClick={() => setShowReceipt(false)}>Cancelar</Button>
+					<Button style={BLUE_BTN} onClick={submitReceipt}>
+						<i className="fa-solid fa-print me-1"></i>Imprimir recibo
+					</Button>
+				</Modal.Footer>
+			</Modal>
 
 			{/* Modal cobrar */}
 			<Modal show={showPay} onHide={() => setShowPay(false)} centered backdrop="static" keyboard={false}>
@@ -857,6 +1011,11 @@ const CuentaDetail = () => {
 						checked={tipEnabled}
 						onChange={(e) => setTipEnabled(e.target.checked)}
 					/>
+					{tipLeft() > 0 && (
+						<div className="small text-muted mb-2">
+							Propina del recibo impreso: {money(account.tipPending)}. Al cobrar la cuenta completa se cobra al menos {money(tipLeft())}.
+						</div>
+					)}
 					{tipEnabled && (() => {
 						const base = Number(payAmount) || 0;
 						const s10 = Math.round(base * 0.10 * 100) / 100;
@@ -885,7 +1044,10 @@ const CuentaDetail = () => {
 				</Modal.Body>
 				<Modal.Footer>
 					<Button variant="light" onClick={() => setShowPay(false)}>Cancelar</Button>
-					<Button variant="success" onClick={submitPay}>Registrar pago</Button>
+					<Button variant="success" onClick={() => submitPay(false)}>Registrar pago</Button>
+					<Button style={BLUE_BTN} onClick={() => submitPay(true)}>
+						<i className="fa-solid fa-print me-1"></i>Registrar e imprimir pago
+					</Button>
 				</Modal.Footer>
 			</Modal>
 
@@ -923,7 +1085,10 @@ const CuentaDetail = () => {
 				</Modal.Body>
 				<Modal.Footer>
 					<Button variant="light" onClick={() => setShowPayItems(false)}>Cancelar</Button>
-					<Button variant="success" onClick={submitPayItems} disabled={payItemSel.length === 0}>Cobrar {money(payItemsTotal)}</Button>
+					<Button variant="success" onClick={() => submitPayItems(false)} disabled={payItemSel.length === 0}>Cobrar {money(payItemsTotal)}</Button>
+					<Button style={BLUE_BTN} onClick={() => submitPayItems(true)} disabled={payItemSel.length === 0}>
+						<i className="fa-solid fa-print me-1"></i>Cobrar e imprimir
+					</Button>
 				</Modal.Footer>
 			</Modal>
 
@@ -955,8 +1120,8 @@ const CuentaDetail = () => {
 							<div className="mb-3" key={g.label}>
 								<div className="d-flex justify-content-between align-items-center mb-2">
 									<strong style={{ fontSize: "1.1rem" }}>{g.label}</strong>
-									<span className={`fw-bold ${total === target ? "text-success" : "text-danger"}`} style={{ fontSize: "1.1rem" }}>
-										{dist ? `Repartidas ${total}/${target}` : `Elegidos ${total}/${target}`}
+									<span className={`fw-bold ${total === target || g.optional ? "text-success" : "text-danger"}`} style={{ fontSize: "1.1rem" }}>
+										{dist ? `Repartidas ${total}/${target}` : g.optional ? 'Opcional' : `Elegidos ${total}/${target}`}
 									</span>
 								</div>
 								{dist && (
@@ -969,7 +1134,7 @@ const CuentaDetail = () => {
 										const p = optProduct(oid);
 										const count = (configChoices[g.label] || {})[oid] || 0;
 										const selected = count > 0;
-										const canSelect = dist ? (selected || dCount < maxOpt) : !full;
+										const canSelect = dist ? (selected || dCount < maxOpt) : g.optional ? (!selected && !full) : !full;
 										return (
 											<Col xs={6} md={4} key={oid}>
 												<Card
@@ -1037,6 +1202,63 @@ const CuentaDetail = () => {
 				<Modal.Footer>
 					<Button variant="light" onClick={() => setShowDiscount(false)}>Cancelar</Button>
 					<Button variant="primary" onClick={submitDiscount}>{isAdmin ? 'Aplicar' : 'Solicitar'}</Button>
+				</Modal.Footer>
+			</Modal>
+
+			{/* Modal cambiar mesa */}
+			<Modal show={showMove} onHide={() => setShowMove(false)} centered backdrop="static" keyboard={false}>
+				<Modal.Header closeButton><Modal.Title>Cambiar mesa</Modal.Title></Modal.Header>
+				<Modal.Body>
+					<p className="mb-2">
+						Mesa actual: <strong>{(account.tables || []).map((t) => t.name || t.number).join(', ')}</strong>.
+						Elija la mesa (o mesas) a donde se movieron. Las comandas y cobros se quedan en la cuenta.
+					</p>
+					{['pequeno', 'grande', null].map((salon) => {
+						const list = allTables.filter(
+							(t) => !t.isTakeout && t.number !== 0 && (t.salon || null) === salon,
+						);
+						if (list.length === 0) return null;
+						return (
+							<div key={salon || 'otro'} className="mb-2">
+								<div className="fw-bold mb-1">{salon === 'pequeno' ? 'Salón pequeño' : salon === 'grande' ? 'Salón grande' : 'Otras'}</div>
+								<Row className="g-2">
+									{list.map((t) => {
+										const active = moveSel.includes(t.id);
+										const current = (account.tables || []).some((at) => at.id === t.id);
+										const otherSalon = moveSel.length > 0 && allTables.find((x) => x.id === moveSel[0])?.salon !== t.salon;
+										return (
+											<Col xs={3} key={t.id}>
+												<div
+													className="text-center p-2 rounded border"
+													style={{
+														cursor: otherSalon ? 'not-allowed' : 'pointer',
+														opacity: otherSalon ? 0.4 : 1,
+														borderColor: active ? '#6A1B9A' : undefined,
+														background: active ? '#F3E5F5' : undefined,
+													}}
+													onClick={() => {
+														if (otherSalon) return;
+														setMoveSel((prev) =>
+															prev.includes(t.id) ? prev.filter((x) => x !== t.id) : [...prev, t.id],
+														);
+													}}
+												>
+													<div className="font-w600">{t.name || `#${t.number}`}</div>
+													<small className="text-muted">
+														{current ? 'Actual' : { free: 'Libre', occupied: 'Ocupada', billing: 'Cobrando' }[t.status] || t.status}
+													</small>
+												</div>
+											</Col>
+										);
+									})}
+								</Row>
+							</div>
+						);
+					})}
+				</Modal.Body>
+				<Modal.Footer>
+					<Button variant="light" onClick={() => setShowMove(false)}>Cancelar</Button>
+					<Button style={PURPLE_BTN} onClick={submitMove}>Cambiar mesa</Button>
 				</Modal.Footer>
 			</Modal>
 

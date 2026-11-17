@@ -29,6 +29,23 @@ const STATUS_ACTION: Record<string, string> = {
 /** Ventana de cocina/barra: solo comandas de menos de 300 minutos. */
 export const KITCHEN_WINDOW_MIN = 300;
 
+/**
+ * Quita de la nota del renglón lo que ya sale con guiones ("Sabor: 10 BBQ",
+ * "Aderezo: Ranch", "Agregar: Con picante"): solo queda lo que escribió el mesero.
+ * Así no se repite aunque una tablet tenga la versión vieja que lo mandaba.
+ */
+export function stripChoiceNotes(notes: string | null | undefined, groups: { label: string }[]) {
+  if (!notes) return null;
+  const labels = groups.map((g) => g.label + ':');
+  const kept = notes
+    .split(' · ')
+    .flatMap((part) => part.split('; '))
+    .filter((seg) => !labels.some((l) => seg.trim().startsWith(l)))
+    .join(' · ')
+    .trim();
+  return kept || null;
+}
+
 @Injectable()
 export class ComandasService {
   constructor(
@@ -173,9 +190,11 @@ export class ComandasService {
                     );
                   }
                 }
-              } else if (picked.length !== g.choose) {
+              } else if (g.optional ? picked.length > g.choose : picked.length !== g.choose) {
                 throw new BadRequestException(
-                  `"${menuItem.name}": debe elegir ${g.choose} de "${g.label}"`,
+                  g.optional
+                    ? `"${menuItem.name}": máximo ${g.choose} de "${g.label}"`
+                    : `"${menuItem.name}": debe elegir ${g.choose} de "${g.label}"`,
                 );
               }
               for (const id of picked) remaining.splice(remaining.indexOf(id), 1);
@@ -198,7 +217,7 @@ export class ComandasService {
             quantity: line.quantity,
             unitPrice,
             subtotal,
-            notes: line.notes ?? null,
+            notes: stripChoiceNotes(line.notes, choiceGroups),
             components: components.length ? components : null,
           });
           await manager.save(item);
@@ -217,6 +236,9 @@ export class ComandasService {
           manager,
         );
       }
+
+      // Cocina y barra de la misma comanda comparten número (el de la primera).
+      await manager.update(Order, { id: In(createdIds) }, { comandaNo: createdIds[0] });
 
       account.total = round2(accountTotal);
       await manager.save(account);
